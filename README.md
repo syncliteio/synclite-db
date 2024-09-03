@@ -1,2 +1,1 @@
-# synclite-db
-SyncLiteDB : A Lightweight Sync-Ready Single Node Database   
+Refer README of parent project for details : https://github.com/syncliteio/SyncLite/blob/main/README.md
