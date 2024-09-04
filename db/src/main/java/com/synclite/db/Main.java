@@ -436,10 +436,14 @@ public class Main {
 		JSONObject jsonResponse = new JSONObject();
 		try {
 			jsonResponse.put("message", message);
-			jsonResponse.put("result", result);
+			if (result != null) {
+				jsonResponse.put("resultset", result);
+			} else {
+				jsonResponse.put("resultset", JSONObject.NULL);
+			}
 		} catch (JSONException e) {
 			jsonResponse.put("message", "Error creating JSON response");
-			jsonResponse.put("result", JSONObject.NULL);
+			jsonResponse.put("resultset", JSONObject.NULL);
 		}
 		return jsonResponse.toString();
 	}
