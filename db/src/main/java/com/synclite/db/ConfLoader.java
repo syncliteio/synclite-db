@@ -47,6 +47,7 @@ public class ConfLoader {
 	private URI address;
 	private Integer numThreads;
 	private Level traceLevel;
+	private Long idleConnectionTimeout;
 
 	public URI getAddress() {
 		return address;
@@ -58,6 +59,10 @@ public class ConfLoader {
 	
 	public Level getTraceLevel() {
 		return traceLevel;
+	}
+	
+	public long getIdleConnectionTimeout() {
+		return idleConnectionTimeout;
 	}
 	
 	private static final class InstanceHolder {
@@ -154,7 +159,23 @@ public class ConfLoader {
 		} else {
 			this.numThreads = 4;
 		}
-		
+
+		propValue = properties.get("idle-connection-timeout-ms");
+		if (propValue != null) {
+			try {
+				this.idleConnectionTimeout = Long.valueOf(propValue);
+				if (this.idleConnectionTimeout == null) {
+					throw new SyncLiteException("Invalid value specified for idle-connection-timeout in configuration file");
+				} else if (this.idleConnectionTimeout <= 0) {
+					throw new SyncLiteException("Please specify a positive numeric value for idle-connection-timeout in configuration file");
+				}
+			} catch (NumberFormatException e) {
+				throw new SyncLiteException("Please specify a positive numeric value for idle-connection-timeout in configuration file");
+			}
+		} else {
+			this.idleConnectionTimeout = 30000L;
+		}
+
 		propValue = properties.get("trace-level");
 		if (propValue != null) {
 			this.traceLevel= Level.toLevel(propValue, Level.INFO);
