@@ -49,7 +49,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Scanner;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -63,42 +63,17 @@ import org.zeromq.SocketType;
 import org.zeromq.ZContext;
 import org.zeromq.ZMQ;
 
-import io.synclite.logger.Derby;
-import io.synclite.logger.DerbyAppender;
-import io.synclite.logger.DuckDB;
-import io.synclite.logger.DuckDBAppender;
-import io.synclite.logger.H2;
-import io.synclite.logger.H2Appender;
-import io.synclite.logger.HyperSQL;
-import io.synclite.logger.HyperSQLAppender;
-import io.synclite.logger.SQLite;
-import io.synclite.logger.SQLiteAppender;
-import io.synclite.logger.Streaming;
-import io.synclite.logger.SyncLite;
+import com.synclite.db.DB.DBConnection;
+
+import io.synclite.logger.*;
 
 
 public class Main {
 
 	private static Path dbDir;
 	private static Path stageDir;
-	private static HashMap<DeviceType, String> connStrPrefixes = new HashMap<DeviceType, String>();
-	private static ConcurrentHashMap<Path, DB> databases = new ConcurrentHashMap<Path, DB>();
 	private static Path dbConfigFilePath = null;
-	private static Logger globalTracer;
-
-	static {
-		connStrPrefixes.put(DeviceType.SQLITE, "jdbc:synclite_sqlite:");
-		connStrPrefixes.put(DeviceType.SQLITE_APPENDER, "jdbc:synclite_sqlite_appender:");
-		connStrPrefixes.put(DeviceType.DUCKDB, "jdbc:synclite_duckdb:");
-		connStrPrefixes.put(DeviceType.DUCKDB_APPENDER, "jdbc:synclite_duckdb_appender:");
-		connStrPrefixes.put(DeviceType.DERBY, "jdbc:synclite_derby:");
-		connStrPrefixes.put(DeviceType.DERBY_APPENDER, "jdbc:synclite_derby_appender:");
-		connStrPrefixes.put(DeviceType.H2, "jdbc:synclite_h2:");
-		connStrPrefixes.put(DeviceType.H2_APPENDER, "jdbc:synclite_h2_appender:");
-		connStrPrefixes.put(DeviceType.HYPERSQL, "jdbc:synclite_hsqldb:");
-		connStrPrefixes.put(DeviceType.HYPERSQL_APPENDER, "jdbc:synclite_hsqldb_appender:");
-		connStrPrefixes.put(DeviceType.STREAMING, "jdbc:synclite_streaming:");		
-	}
+	public static Logger globalTracer;
 
 	public static void main(String[] args) {
 
@@ -133,38 +108,38 @@ public class Main {
 
 			ExecutorService threadPool = Executors.newFixedThreadPool(ConfLoader.getInstance().getNumThreads());
 
-	        // Create and bind a REP socket for each worker thread
-            for (int i = 0; i < ConfLoader.getInstance().getNumThreads() ; i++) {
-                threadPool.submit(() -> {
-                    ZMQ.Socket workerSocket = context.createSocket(SocketType.REP);
-                    workerSocket.bind(ConfLoader.getInstance().getAddress().toString());
+			// Create and bind a REP socket for each worker thread
+			for (int i = 0; i < ConfLoader.getInstance().getNumThreads() ; i++) {
+				threadPool.submit(() -> {
+					ZMQ.Socket workerSocket = context.createSocket(SocketType.REP);
+					workerSocket.bind(ConfLoader.getInstance().getAddress().toString());
 
-                    while (!Thread.currentThread().isInterrupted()) {
-                        // Receive a request
-                        String request = workerSocket.recvStr(0);
-                        globalTracer.debug("Received request: " + request);
+					while (!Thread.currentThread().isInterrupted()) {
+						// Receive a request
+						String request = workerSocket.recvStr(0);
+						globalTracer.debug("Received request: " + request);
 
-                        // Process the request
-                        String response = processRequest(request);
+						// Process the request
+						String response = processRequest(request);
 
-                        // Send the response back to the client
-                        workerSocket.send(response, 0);
-                    }
+						// Send the response back to the client
+						workerSocket.send(response, 0);
+					}
 
-                    workerSocket.close();
-                });
-            }
-            
-            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-                try {
-    				SyncLite.closeAllDatabases();
-    			} catch (SQLException e) {
-    			}
+					workerSocket.close();
+				});
+			}
 
-                threadPool.shutdownNow();
-                System.out.println("SyncLite DB Server is shutting down.");
-                globalTracer.info("SyncLite DB Server is shutting down.");
-            }));
+			Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+				try {
+					SyncLite.closeAllDatabases();
+				} catch (SQLException e) {
+				}
+
+				threadPool.shutdownNow();
+				System.out.println("SyncLite DB Server is shutting down.");
+				globalTracer.info("SyncLite DB Server is shutting down.");
+			}));
 		}
 	}
 
@@ -203,79 +178,143 @@ public class Main {
 	private static String processRequest(String request) {
 		try {
 			JSONObject jsonRequest = new JSONObject(request);
-			DB db;
+			DB db = null;
 			Path dbPath = null;
+			DeviceType dbType = null;
+			String dbName = null;
+			Path dbSyncLiteLoggerConfig = null;
+			
 			if (jsonRequest.has("db-path")) {
 				dbPath = Path.of(jsonRequest.getString("db-path"));
 				if (!Files.exists(dbPath.getParent())) {
-					return createJsonResponse("Parent directory of specified db-path : " + dbPath + " does not exist", null);
+					return createJsonResponse(false, "Parent directory of specified db-path : " + dbPath + " does not exist", null);
 				}
-				db = databases.get(dbPath);
+				db = DB.getDatabase(dbPath);
 			} else {
-				return createJsonResponse("device-path must be specified : ", null);				
+				return createJsonResponse(false, "db-path must be specified : ", null);				
 			}
 
-			if (db == null) {	
-				db = new DB();
-				db.path = dbPath;
+			if (db == null) {
 
 				if (jsonRequest.has("db-type")) {
 					String type = jsonRequest.getString("db-type");
 					if (type.isBlank()) {
-						return createJsonResponse("db-type must be specified : ", null);
+						return createJsonResponse(false, "db-type must be specified : ", null);
 					} else {					
 						try {
-							db.type = DeviceType.valueOf(type);
+							dbType = DeviceType.valueOf(type);
 						} catch (Exception e) {
-							return createJsonResponse("Invalid db-type : "  + type + " specified", null);
+							return createJsonResponse(false, "Invalid db-type : "  + type + " specified", null);
 						}
 					}
 				} else {
-					return createJsonResponse("db-type must be specified : ", null);
+					return createJsonResponse(false, "db-type must be specified : ", null);
 				}
 
 				if (jsonRequest.has("db-name")) {
-					db.name = jsonRequest.getString("db-name");
+					dbName = jsonRequest.getString("db-name");
 				}
 
-				db.syncliteLoggerConfig = dbDir.resolve("synclite_logger.conf");
+				dbSyncLiteLoggerConfig = dbDir.resolve("synclite_logger.conf");
 				if (jsonRequest.has("synclite-logger-config")) {
 					String config = jsonRequest.getString("synclite-logger-config");
 					if (config.isBlank()) {
-						return createJsonResponse("Empty synclite-logger-config specified", null);
+						return createJsonResponse(false, "Empty synclite-logger-config specified", null);
 					}
-					db.syncliteLoggerConfig = Path.of(config);
+					dbSyncLiteLoggerConfig = Path.of(config);
 				} else {
-					db.syncliteLoggerConfig = dbDir.resolve("synclite_logger.conf");
+					dbSyncLiteLoggerConfig = dbDir.resolve("synclite_logger.conf");
 				}
 
-				if (!Files.exists(db.syncliteLoggerConfig)) {
-					return createJsonResponse("Specified synclite-logger-config does not exist", null);
+				if (!Files.exists(dbSyncLiteLoggerConfig)) {
+					return createJsonResponse(false, "Specified synclite-logger-config does not exist", null);
 				}
+			
+				db = new DB(dbName, dbType, dbPath, dbSyncLiteLoggerConfig);
+			}
+
+			UUID txnHandle = null;
+			if (jsonRequest.has("txn-handle")) {
+				String txnH = jsonRequest.getString("txn-handle");
+				if (!txnH.isBlank()) {
+					try {
+						txnHandle = UUID.fromString(txnH);
+					} catch (Exception e) {
+						return createJsonResponse(false, "Invalid txn-handle specified : " + txnH + " : " + e.getMessage(), null);
+					}
+				} 
 			}
 
 			String sql;
 			if (jsonRequest.has("sql")) {
 				sql = jsonRequest.getString("sql");
 				if (sql.isBlank()) {
-					return createJsonResponse("sql must be specified : ", null);
+					return createJsonResponse(false, "sql must be specified : ", null);
 				} 
 			} else {
-				return createJsonResponse("sql must be specified : ", null);
+				return createJsonResponse(false, "sql must be specified : ", null);
 			}
 
 			//
 			//initialize if the command type is initialize or the device has not been initialized yet after last server restart.
 			//
-			if (sql.equalsIgnoreCase("initialize")) {				
+
+			String sqlToCheck = sql.split(";")[0].strip().toLowerCase();
+			switch (sqlToCheck) {
+			case "initialize":
 				try {
-					initDevice(db);
-					databases.put(db.path, db);					
-					return createJsonResponse("Device initialized successfully : ", null);
+					db.init();
+					DB.addDatabase(db);					
+					return createJsonResponse(true, "Database initialized successfully : ", null);
 				} catch (Exception e) {
-					return createJsonResponse("Failed to initialize device : " + db + " : " + e.getMessage(), null);
+					return createJsonResponse(false, "Failed to initialize database : " + db + " : " + e.getMessage(), null);
 				}
-			} 
+
+			case "close":
+				try {
+					db.close();
+					DB.removeDatabase(db);					
+					return createJsonResponse(true, "Database closed successfully : ", null);
+				} catch (Exception e) {
+					return createJsonResponse(false, "Failed to initialize database : " + db + " : " + e.getMessage(), null);
+				}
+
+			case "begin" :
+				try {
+					// Open a connection to the specified SyncLite device
+					Properties props = new Properties();
+					props.put("config", db.getSyncLiteLoggerConfig());
+					props.put("device-name", db.getName());
+					txnHandle = db.createConnectionForTxn();
+					return createJsonResponseForTxnBegin(true, "Transaction started succcessfully", txnHandle.toString());
+				} catch (Exception e) {
+					return createJsonResponse(false, "Failed to begin transaction on database : " + db + " : " + e.getMessage(), null);
+				}
+
+			case "commit":
+				try {
+					if (txnHandle != null) {
+						db.commitConnectionForTxn(txnHandle);
+						return createJsonResponse(true, "Transaction committed successfully: ", null);
+					} else {
+						return createJsonResponse(false, "txn-handle must be specified : ", null);
+					}
+				} catch (Exception e) {
+					return createJsonResponse(false, "Failed to commit transaction on database : " + db + " : " + e.getMessage(), null);
+				}
+				
+			case "rollback":	
+				try {
+					if (txnHandle != null) {
+						db.rollbackConnectionForTxn(txnHandle);
+						return createJsonResponse(true, "Transaction rolled back successfully: ", null);
+					} else {
+						return createJsonResponse(false, "txn-handle must be specified : ", null);
+					}
+				} catch (Exception e) {
+					return createJsonResponse(false, "Failed to rollback transaction on database : " + db + " : " + e.getMessage(), null);
+				}
+			}
 
 			// Extract multiple sets of arguments for batch processing
 			List<List<Object>> argumentSets = new ArrayList<>();
@@ -295,82 +334,46 @@ public class Main {
 				}
 			}
 
-			// Open a connection to the specified SyncLite device
-			String prefix = connStrPrefixes.get(db.type);
-			Properties props = new Properties();
-			props.put("config", db.syncliteLoggerConfig);
-			props.put("device-name", db.name);
-			try (Connection conn = DriverManager.getConnection(prefix + db.path, props)) {
-				return executeSql(conn, sql, argumentSets);
-			} catch (SQLException e) {
-				return createJsonResponse("DB connection error: " + e.getMessage(), null);
-			}
-		} catch (JSONException e) {
-			return createJsonResponse("Invalid JSON request : " + e.getMessage(), null);
-		}
-	}
-
-	private static void initDevice(DB device) throws SQLException, ClassNotFoundException {
-		switch(device.type) {
-		case SQLITE:
-			Class.forName("io.synclite.logger.SQLite");
-			SQLite.initialize(device.path, device.syncliteLoggerConfig, device.name);
-			break;
-		case SQLITE_APPENDER:
-			Class.forName("io.synclite.logger.SQLiteAppender");
-			SQLiteAppender.initialize(device.path, device.syncliteLoggerConfig, device.name);
-			break;		
-		case DUCKDB:
-			Class.forName("io.synclite.logger.DuckDB");
-			DuckDB.initialize(device.path, device.syncliteLoggerConfig, device.name);
-			break;
-		case DUCKDB_APPENDER:
-			Class.forName("io.synclite.logger.DuckDBAppender");
-			DuckDBAppender.initialize(device.path, device.syncliteLoggerConfig, device.name);
-			break;		
-		case H2:
-			Class.forName("io.synclite.logger.H2");
-			H2.initialize(device.path, device.syncliteLoggerConfig, device.name);
-			break;
-		case H2_APPENDER:
-			Class.forName("io.synclite.logger.H2Appender");
-			H2Appender.initialize(device.path, device.syncliteLoggerConfig, device.name);
-			break;		
-		case DERBY:
-			Class.forName("io.synclite.logger.Derby");
-			Derby.initialize(device.path, device.syncliteLoggerConfig, device.name);
-			break;
-		case DERBY_APPENDER:
-			Class.forName("io.synclite.logger.DerbyAppender");
-			DerbyAppender.initialize(device.path, device.syncliteLoggerConfig, device.name);
-			break;		
-		case HYPERSQL:
-			Class.forName("io.synclite.logger.HyperSQL");
-			HyperSQL.initialize(device.path, device.syncliteLoggerConfig, device.name);
-			break;
-		case HYPERSQL_APPENDER:
-			Class.forName("io.synclite.logger.HyperSQLAppender");
-			HyperSQLAppender.initialize(device.path, device.syncliteLoggerConfig, device.name);
-			break;	
-		case STREAMING:
-			Class.forName("io.synclite.logger.Streaming");
-			Streaming.initialize(device.path, device.syncliteLoggerConfig, device.name);
-			break;
-		}
-	}
-
-	private static String executeSql(Connection conn, String sql, List<List<Object>> argumentSets) {
-		boolean isQuery = sql.trim().toUpperCase().startsWith("SELECT");
-		try {
-			if (isQuery) {
-				return executeQuery(conn, sql, argumentSets);
-			} else if (argumentSets.size() > 0) {
-				return executeBatch(conn, sql, argumentSets);
+			//
+			//If txn-handle is specified then we need to execute the specified sql using open connection 
+			//for the respective transaction.
+			//
+			if (txnHandle != null) {
+				try (DBConnection dbConn = db.getConnectionForTxn(txnHandle)) {
+					if (dbConn == null) {
+						return createJsonResponse(false, "Connection closed for specified txn-handle : " + txnHandle , null);
+					}
+					try {
+						return executeSql(dbConn.getConnection(), sql, argumentSets);
+					} catch (Exception e) {
+						return createJsonResponse(false, "Database error: " + e.getMessage(), null);
+					}
+				}
 			} else {
-				return executeUpdate(conn, sql);
+				// Open a connection to the specified SyncLite device
+				Properties props = new Properties();
+				props.put("config", db.getSyncLiteLoggerConfig());
+				props.put("device-name", db.getName());
+				try (Connection conn = DriverManager.getConnection(db.getURL(), props)) {
+					return executeSql(conn, sql, argumentSets);
+				} catch (SQLException e) {
+					return createJsonResponse(false, "Database error: " + e.getMessage(), null);
+				}
 			}
-		} catch (SQLException e) {
-			return createJsonResponse("SQL Error: " + e.getMessage(), null);
+		} catch (Exception e) {
+			return createJsonResponse(false, "Failed to process request : " + e.getMessage(), null);
+		}
+	}
+
+
+	private static String executeSql(Connection conn, String sql, List<List<Object>> argumentSets) throws SQLException {
+		boolean isQuery = sql.trim().toUpperCase().startsWith("SELECT");
+		if (isQuery) {
+			return executeQuery(conn, sql, argumentSets);
+		} else if (argumentSets.size() > 0) {
+			return executeBatch(conn, sql, argumentSets);
+		} else {
+			return executeUpdate(conn, sql);
 		}
 	}
 
@@ -397,7 +400,7 @@ public class Main {
 					results.add(row);
 				}
 
-				return createJsonResponse( results.size() + " rows", results);
+				return createJsonResponse(true, results.size() + " rows", results);
 			}
 		}
 	}
@@ -421,35 +424,47 @@ public class Main {
 			for (int count : updateCounts) {
 				updateCountsJsonArray.put(count);
 			}
-			return createJsonResponse("Batch executed successfully, rows affected: " + updateCounts.length, updateCountsJsonArray);
+			return createJsonResponse(true, "Batch executed successfully, rows affected: " + updateCounts.length, updateCountsJsonArray);
 		}
 	}
 
 	private static String executeUpdate(Connection conn, String sql) throws SQLException {
 		try (Statement stmt = conn.createStatement()) {
 			int rowsAffected = stmt.executeUpdate(sql);
-			return createJsonResponse("Update executed successfully, rows affected: " + rowsAffected, null);
+			return createJsonResponse(true, "Update executed successfully, rows affected: " + rowsAffected, null);
 		}
 	}
 
-	private static String createJsonResponse(String message, Object result) {
+	private static String createJsonResponse(Boolean result, String message, Object resultSet) {
 		JSONObject jsonResponse = new JSONObject();
 		try {
+			jsonResponse.put("result", result);
 			jsonResponse.put("message", message);
-			if (result != null) {
-				jsonResponse.put("resultset", result);
-			} else {
-				jsonResponse.put("resultset", JSONObject.NULL);
+			if (resultSet != null) {
+				jsonResponse.put("resultset", resultSet);
 			}
 		} catch (JSONException e) {
+			jsonResponse.put("result", false);
+			jsonResponse.put("message", "Error creating JSON response : " + e.getMessage());
+		}
+		return jsonResponse.toString();
+	}
+
+	private static String createJsonResponseForTxnBegin(Boolean result, String message, String txnHandle) {
+		JSONObject jsonResponse = new JSONObject();
+		try {
+			jsonResponse.put("result", result);
+			jsonResponse.put("message", message);
+			jsonResponse.put("txn-handle", txnHandle);
+		} catch (JSONException e) {
+			jsonResponse.put("result", false);
 			jsonResponse.put("message", "Error creating JSON response");
-			jsonResponse.put("resultset", JSONObject.NULL);
 		}
 		return jsonResponse.toString();
 	}
 
 	private static void createDefaultDBConf() throws SQLException {
-        String currentDirectory = System.getProperty("user.dir");
+		String currentDirectory = System.getProperty("user.dir");
 		dbConfigFilePath = Path.of(currentDirectory, "synclite_db.conf");
 		if (Files.exists(dbConfigFilePath)) {
 			return;
@@ -463,6 +478,8 @@ public class Main {
 		confBuilder.append("address=").append("tcp://localhost:5555");
 		confBuilder.append(newLine);
 		confBuilder.append("num-threads=4");
+		confBuilder.append(newLine);
+		confBuilder.append("idle-connection-timeout-ms=30000");
 		confBuilder.append(newLine);
 		confBuilder.append("trace-level=INFO");
 		String confStr = confBuilder.toString();
@@ -606,9 +623,9 @@ public class Main {
 		} catch (Exception e) {
 			// Skip
 		}
-		
+
 		StringBuilder builder = new StringBuilder();
-		
+
 		builder.append("\n");
 		builder.append("===================SyncLite DB " + version + "==========================");
 		builder.append("\n");
@@ -618,11 +635,13 @@ public class Main {
 		builder.append("\n");
 		builder.append("num-threads : " + ConfLoader.getInstance().getNumThreads());
 		builder.append("\n");
+		builder.append("idle-connection-timeout-ms : " + ConfLoader.getInstance().getIdleConnectionTimeout());
+		builder.append("\n");
 		builder.append("trace-level : " + ConfLoader.getInstance().getTraceLevel());
 		builder.append("\n");
 		builder.append("========================================================================");
 		builder.append("\n");		
-		
+
 		System.out.print(builder.toString());
 		globalTracer.info(builder.toString());
 	}
@@ -633,7 +652,7 @@ public class Main {
 		globalTracer.setLevel(ConfLoader.getInstance().getTraceLevel());
 		RollingFileAppender fa = new RollingFileAppender();
 		fa.setName("FileLogger");
-        String currentDirectory = System.getProperty("user.dir");
+		String currentDirectory = System.getProperty("user.dir");
 		fa.setFile(Path.of(currentDirectory, "synclite_db.trace").toString());
 		fa.setLayout(new PatternLayout("%d %-5p [%c{1}] %m%n"));
 		fa.setMaxBackupIndex(10);
@@ -642,5 +661,8 @@ public class Main {
 		fa.activateOptions();
 		globalTracer.addAppender(fa);    	
 	}
+
+
+
 
 }
