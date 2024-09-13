@@ -35,8 +35,6 @@ package com.synclite.db;
 import java.io.BufferedReader;
 import java.io.FileReader;
 import java.io.IOException;
-import java.net.URI;
-import java.net.URISyntaxException;
 import java.nio.file.Path;
 import java.util.HashMap;
 
@@ -44,19 +42,19 @@ import org.apache.log4j.Level;
 
 public class ConfLoader {
 
-	private URI address;
 	private Integer numThreads;
+	private Integer port;
 	private Level traceLevel;
 	private Long idleConnectionTimeout;
-
-	public URI getAddress() {
-		return address;
-	}
 
 	public int getNumThreads() {
 		return numThreads;
 	}
-	
+
+	public int getPort() {
+		return port;
+	}
+
 	public Level getTraceLevel() {
 		return traceLevel;
 	}
@@ -128,20 +126,18 @@ public class ConfLoader {
 	}
 
 	private void validateAndProcessProperties() throws SyncLiteException {
-
-		String propValue = properties.get("address");
+		String propValue = properties.get("port");
 		if (propValue != null) {
 			try {
-	            address = new URI(propValue);
-			} catch (URISyntaxException e) {
-				throw new SyncLiteException("Please specify a valid address in the configuration file : " + e.getMessage(), e);
-			}			
-		} else {
-			try {
-				this.address = new URI("tcp://localhost:5555");
-			} catch (URISyntaxException e) {
-				//Skip
+	            port = Integer.valueOf(propValue);
+	            if (port <= 0) {
+	            	throw new SyncLiteException("Please specify a valid positive numeric port in the configuration file");
+	            }
+			} catch (NumberFormatException e) {
+				throw new SyncLiteException("Please specify a valid positive numeric port in the configuration file : " + e.getMessage(), e);
 			}
+		} else {
+			port = 5555;
 		}
 
 		propValue = properties.get("num-threads");
