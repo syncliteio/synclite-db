@@ -14,26 +14,14 @@
  *
  */
 
-/*
- * Copyright (c) 2024 mahendra.chavan@synclite.io, all rights reserved.
- *
- *
- * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.  You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software distributed under the License
- * is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
- * or implied.  See the License for the specific language governing permissions and limitations
- * under the License.
- *
- */
-
 package com.synclite.db;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -59,14 +47,13 @@ import org.apache.log4j.RollingFileAppender;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
-import org.zeromq.SocketType;
-import org.zeromq.ZContext;
-import org.zeromq.ZMQ;
 
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
+import com.sun.net.httpserver.HttpServer;
 import com.synclite.db.DB.DBConnection;
 
-import io.synclite.logger.*;
-
+import io.synclite.logger.SyncLite;
 
 public class Main {
 
@@ -74,6 +61,45 @@ public class Main {
 	private static Path stageDir;
 	private static Path dbConfigFilePath = null;
 	public static Logger globalTracer;
+
+	// Define a handler to respond to requests
+	static class SyncLiteHTTPHandler implements HttpHandler {
+		@Override
+		public void handle(HttpExchange exchange) throws IOException {
+
+			String requestMethod = exchange.getRequestMethod();
+			String response = "";
+
+			if ("POST".equals(requestMethod)) {
+				InputStream inputStream = exchange.getRequestBody();
+				String requestBody = new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
+				globalTracer.debug("Received request: " + requestBody);
+
+				response = processRequest(requestBody);
+
+				exchange.sendResponseHeaders(HttpURLConnection.HTTP_OK, response.getBytes().length);
+				try (OutputStream os = exchange.getResponseBody()) {
+					os.write(response.getBytes());
+				}
+			}  else if ("GET".equals(requestMethod)) {
+				response = "Server is up and running!";
+
+				exchange.sendResponseHeaders(HttpURLConnection.HTTP_OK, response.getBytes().length);
+
+				// Send the response message
+				try (OutputStream os = exchange.getResponseBody()) {
+					os.write(response.getBytes());
+				}
+			} else {
+				// Handle other HTTP methods (e.g., PUT, DELETE)
+				String methodNotAllowed = "Method Not Allowed. Use POST.";
+				exchange.sendResponseHeaders(405, methodNotAllowed.length());
+				OutputStream outputStream = exchange.getResponseBody();
+				outputStream.write(methodNotAllowed.getBytes(StandardCharsets.UTF_8));
+				outputStream.close();
+			}
+		}
+	}
 
 	public static void main(String[] args) {
 
@@ -95,51 +121,30 @@ public class Main {
 
 		initDB();
 
-		// Register a shutdown hook
-		Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-			try {
-				SyncLite.closeAllDatabases();
-			} catch (SQLException e) {
-			}
-			System.out.println("Shutting down gracefully...");
-		}));
+		try {
+			// Create an HTTP server and bind it to a port
+			HttpServer server = HttpServer.create(new InetSocketAddress(ConfLoader.getInstance().getPort()), 0);
 
-		try (ZContext context = new ZContext()) {
+			server.createContext("/", new SyncLiteHTTPHandler());
 
 			ExecutorService threadPool = Executors.newFixedThreadPool(ConfLoader.getInstance().getNumThreads());
+			server.setExecutor(threadPool);
 
-			// Create and bind a REP socket for each worker thread
-			for (int i = 0; i < ConfLoader.getInstance().getNumThreads() ; i++) {
-				threadPool.submit(() -> {
-					ZMQ.Socket workerSocket = context.createSocket(SocketType.REP);
-					workerSocket.bind(ConfLoader.getInstance().getAddress().toString());
-
-					while (!Thread.currentThread().isInterrupted()) {
-						// Receive a request
-						String request = workerSocket.recvStr(0);
-						globalTracer.debug("Received request: " + request);
-
-						// Process the request
-						String response = processRequest(request);
-
-						// Send the response back to the client
-						workerSocket.send(response, 0);
-					}
-
-					workerSocket.close();
-				});
-			}
+			// Start the server
+			server.start();
 
 			Runtime.getRuntime().addShutdownHook(new Thread(() -> {
 				try {
 					SyncLite.closeAllDatabases();
 				} catch (SQLException e) {
 				}
-
+				server.stop(1);
 				threadPool.shutdownNow();
-				System.out.println("SyncLite DB Server is shutting down.");
-				globalTracer.info("SyncLite DB Server is shutting down.");
+				System.out.println("SyncLiteDB Server is shutting down.");
+				globalTracer.info("SyncLiteDB Server is shutting down.");
 			}));
+		} catch (Exception e) {
+			globalTracer.error("Failed to start server : " + e.getMessage(), e);
 		}
 	}
 
@@ -183,7 +188,7 @@ public class Main {
 			DeviceType dbType = null;
 			String dbName = null;
 			Path dbSyncLiteLoggerConfig = null;
-			
+
 			if (jsonRequest.has("db-path")) {
 				dbPath = Path.of(jsonRequest.getString("db-path"));
 				if (!Files.exists(dbPath.getParent())) {
@@ -195,7 +200,6 @@ public class Main {
 			}
 
 			if (db == null) {
-
 				if (jsonRequest.has("db-type")) {
 					String type = jsonRequest.getString("db-type");
 					if (type.isBlank()) {
@@ -229,7 +233,7 @@ public class Main {
 				if (!Files.exists(dbSyncLiteLoggerConfig)) {
 					return createJsonResponse(false, "Specified synclite-logger-config does not exist", null);
 				}
-			
+
 				db = new DB(dbName, dbType, dbPath, dbSyncLiteLoggerConfig);
 			}
 
@@ -265,7 +269,7 @@ public class Main {
 				try {
 					db.init();
 					DB.addDatabase(db);					
-					return createJsonResponse(true, "Database initialized successfully : ", null);
+					return createJsonResponse(true, "Database initialized successfully", null);
 				} catch (Exception e) {
 					return createJsonResponse(false, "Failed to initialize database : " + db + " : " + e.getMessage(), null);
 				}
@@ -274,7 +278,7 @@ public class Main {
 				try {
 					db.close();
 					DB.removeDatabase(db);					
-					return createJsonResponse(true, "Database closed successfully : ", null);
+					return createJsonResponse(true, "Database closed successfully", null);
 				} catch (Exception e) {
 					return createJsonResponse(false, "Failed to initialize database : " + db + " : " + e.getMessage(), null);
 				}
@@ -302,7 +306,7 @@ public class Main {
 				} catch (Exception e) {
 					return createJsonResponse(false, "Failed to commit transaction on database : " + db + " : " + e.getMessage(), null);
 				}
-				
+
 			case "rollback":	
 				try {
 					if (txnHandle != null) {
@@ -361,6 +365,7 @@ public class Main {
 				}
 			}
 		} catch (Exception e) {
+			globalTracer.debug("Error : " + e.getMessage(), e);
 			return createJsonResponse(false, "Failed to process request : " + e.getMessage(), null);
 		}
 	}
@@ -473,9 +478,9 @@ public class Main {
 		StringBuilder confBuilder = new StringBuilder();
 		String newLine = System.getProperty("line.separator");
 
-		confBuilder.append("#==============SyncLite DB Configurations==================");
+		confBuilder.append("#==============SyncLiteDB Configurations==================");
 		confBuilder.append(newLine);
-		confBuilder.append("address=").append("tcp://localhost:5555");
+		confBuilder.append("port=").append("5555");
 		confBuilder.append(newLine);
 		confBuilder.append("num-threads=4");
 		confBuilder.append(newLine);
@@ -487,7 +492,7 @@ public class Main {
 		try {
 			Files.writeString(dbConfigFilePath, confStr);
 		} catch (IOException e) {
-			throw new SQLException("Failed to create a default SyncLite DB configuration file : " + dbConfigFilePath, e);
+			throw new SQLException("Failed to create a default SyncLiteDB configuration file : " + dbConfigFilePath, e);
 		}
 	}
 
@@ -604,10 +609,29 @@ public class Main {
 	}
 
 	private static final void usage() {
-		System.out.println("Usage:"); 
-		System.out.println("synclite-db");
-		System.out.println("synclite-db --config <path/to/config-file>");
+		if (isWindows()) {
+			System.out.println("Usage:"); 
+			System.out.println();
+			System.out.println("synclite-db.bat");
+			System.out.println();
+			System.out.println("synclite-db.bat --config <path/to/config-file>");
+		} else {
+			System.out.println("Usage:"); 
+			System.out.println();
+			System.out.println("synclite-db.sh");
+			System.out.println();
+			System.out.println("synclite-db.sh--config <path/to/config-file>");
+		}
 		System.exit(1);
+	}
+
+	private final static boolean isWindows() {
+		String osName = System.getProperty("os.name").toLowerCase();
+		if (osName.contains("win")) {
+			return true;
+		} else {
+			return false;
+		}
 	}
 
 	private static void dumpHeader() {
@@ -627,11 +651,11 @@ public class Main {
 		StringBuilder builder = new StringBuilder();
 
 		builder.append("\n");
-		builder.append("===================SyncLite DB " + version + "==========================");
+		builder.append("===================SyncLiteDB " + version + "==========================");
 		builder.append("\n");
 		builder.append("Starting with configuration");
 		builder.append("\n");
-		builder.append("address : " + ConfLoader.getInstance().getAddress());
+		builder.append("port : " + ConfLoader.getInstance().getPort());
 		builder.append("\n");
 		builder.append("num-threads : " + ConfLoader.getInstance().getNumThreads());
 		builder.append("\n");
