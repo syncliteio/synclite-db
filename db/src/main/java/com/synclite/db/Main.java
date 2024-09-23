@@ -427,7 +427,9 @@ public class Main {
 			// Convert the integer array to a JSON array
 			JSONArray updateCountsJsonArray = new JSONArray();
 			for (int count : updateCounts) {
-				updateCountsJsonArray.put(count);
+				JSONObject countObj = new JSONObject();
+				countObj.put("count", count);
+				updateCountsJsonArray.put(countObj);
 			}
 			return createJsonResponse(true, "Batch executed successfully, rows affected: " + updateCounts.length, updateCountsJsonArray);
 		}
