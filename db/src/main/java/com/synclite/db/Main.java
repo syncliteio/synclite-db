@@ -53,7 +53,7 @@ import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 import com.synclite.db.DB.DBConnection;
 
-import io.synclite.logger.SyncLite;
+import io.synclite.logger.*;
 
 public class Main {
 
@@ -271,6 +271,7 @@ public class Main {
 					DB.addDatabase(db);					
 					return createJsonResponse(true, "Database initialized successfully", null);
 				} catch (Exception e) {
+					globalTracer.error("Error: Failed to initialize database : " + db + " : " + e.getMessage(), e);
 					return createJsonResponse(false, "Failed to initialize database : " + db + " : " + e.getMessage(), null);
 				}
 
@@ -280,7 +281,8 @@ public class Main {
 					DB.removeDatabase(db);					
 					return createJsonResponse(true, "Database closed successfully", null);
 				} catch (Exception e) {
-					return createJsonResponse(false, "Failed to initialize database : " + db + " : " + e.getMessage(), null);
+					globalTracer.debug("Failed to close database : " + db + " : " + e.getMessage());
+					return createJsonResponse(false, "Failed to close database : " + db + " : " + e.getMessage(), null);
 				}
 
 			case "begin" :
@@ -292,6 +294,7 @@ public class Main {
 					txnHandle = db.createConnectionForTxn();
 					return createJsonResponseForTxnBegin(true, "Transaction started succcessfully", txnHandle.toString());
 				} catch (Exception e) {
+					globalTracer.debug("Failed to begin transaction on database : " + db + " : " + e.getMessage());
 					return createJsonResponse(false, "Failed to begin transaction on database : " + db + " : " + e.getMessage(), null);
 				}
 
@@ -304,6 +307,7 @@ public class Main {
 						return createJsonResponse(false, "txn-handle must be specified : ", null);
 					}
 				} catch (Exception e) {
+					globalTracer.debug("Failed to commit transaction on database : " + db + " : " + e.getMessage());
 					return createJsonResponse(false, "Failed to commit transaction on database : " + db + " : " + e.getMessage(), null);
 				}
 
@@ -316,6 +320,7 @@ public class Main {
 						return createJsonResponse(false, "txn-handle must be specified : ", null);
 					}
 				} catch (Exception e) {
+					globalTracer.debug("Failed to rollback transaction on database : " + db + " : " + e.getMessage());
 					return createJsonResponse(false, "Failed to rollback transaction on database : " + db + " : " + e.getMessage(), null);
 				}
 			}
@@ -365,7 +370,7 @@ public class Main {
 				}
 			}
 		} catch (Exception e) {
-			globalTracer.debug("Error : " + e.getMessage(), e);
+			globalTracer.error("Error : " + e.getMessage(), e);
 			return createJsonResponse(false, "Failed to process request : " + e.getMessage(), null);
 		}
 	}
@@ -454,6 +459,7 @@ public class Main {
 			jsonResponse.put("result", false);
 			jsonResponse.put("message", "Error creating JSON response : " + e.getMessage());
 		}
+		globalTracer.debug("Response : " + jsonResponse.toString());
 		return jsonResponse.toString();
 	}
 
@@ -467,6 +473,7 @@ public class Main {
 			jsonResponse.put("result", false);
 			jsonResponse.put("message", "Error creating JSON response");
 		}
+		globalTracer.debug("Response : " + jsonResponse.toString());
 		return jsonResponse.toString();
 	}
 
@@ -677,18 +684,15 @@ public class Main {
 		globalTracer = Logger.getLogger(Main.class);    	
 		globalTracer.setLevel(ConfLoader.getInstance().getTraceLevel());
 		RollingFileAppender fa = new RollingFileAppender();
-		fa.setName("FileLogger");
+		fa.setName("SyncLiteDBTracer");
 		String currentDirectory = System.getProperty("user.dir");
 		fa.setFile(Path.of(currentDirectory, "synclite_db.trace").toString());
-		fa.setLayout(new PatternLayout("%d %-5p [%c{1}] %m%n"));
+		fa.setLayout(new PatternLayout("%d %-5p [%c{1}] [%t] %m%n"));
 		fa.setMaxBackupIndex(10);
 		fa.setMaxFileSize("10MB"); // Set the maximum file size to 10 MB
 		fa.setAppend(true);
 		fa.activateOptions();
 		globalTracer.addAppender(fa);    	
 	}
-
-
-
 
 }

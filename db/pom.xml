@@ -1,7 +1,7 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
 	<modelVersion>4.0.0</modelVersion>
 	<groupId>com.synclite</groupId>
-	<artifactId>synclitedb</artifactId>
+	<artifactId>synclite-db</artifactId>
 	<version>${revision}</version>
 	<description>SyncLite SQL Database</description>
 
@@ -98,13 +98,13 @@
 			<artifactId>json</artifactId>
 			<version>20240303</version>
 		</dependency>
-
+<!--
 		<dependency>
 			<groupId>io.synclite</groupId>
 			<artifactId>synclite-logger</artifactId>
 			<version>${synclite-logger.version}</version>
 		</dependency>
-
+-->
 	</dependencies>
 
 </project>
