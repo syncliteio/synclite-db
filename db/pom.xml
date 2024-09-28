@@ -98,13 +98,13 @@
 			<artifactId>json</artifactId>
 			<version>20240303</version>
 		</dependency>
-<!--
+
 		<dependency>
 			<groupId>io.synclite</groupId>
 			<artifactId>synclite-logger</artifactId>
 			<version>${synclite-logger.version}</version>
 		</dependency>
--->
+
 	</dependencies>
 
 </project>
