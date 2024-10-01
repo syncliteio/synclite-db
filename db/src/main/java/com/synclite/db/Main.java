@@ -62,6 +62,24 @@ public class Main {
 	private static Path dbConfigFilePath = null;
 	public static Logger globalTracer;
 
+	static {
+		//Load all SyncLite DB classes here
+		try {
+			Class.forName("io.synclite.logger.SQLite");
+			Class.forName("io.synclite.logger.SQLiteAppender");
+			Class.forName("io.synclite.logger.DuckDB");
+			Class.forName("io.synclite.logger.DuckDBAppender");
+			Class.forName("io.synclite.logger.H2");
+			Class.forName("io.synclite.logger.H2Appender");
+			Class.forName("io.synclite.logger.Derby");
+			Class.forName("io.synclite.logger.DerbyAppender");
+			Class.forName("io.synclite.logger.HyperSQL");
+			Class.forName("io.synclite.logger.HyperSQLAppender");
+			Class.forName("io.synclite.logger.Streaming");
+		} catch (Exception e) {
+			throw new RuntimeException("Failed to load SyncLite Logger classes : " + e.getMessage(), e);
+		}
+	}
 	// Define a handler to respond to requests
 	static class SyncLiteHTTPHandler implements HttpHandler {
 		@Override
@@ -388,29 +406,47 @@ public class Main {
 	}
 
 	private static String executeQuery(Connection conn, String sql, List<List<Object>> argumentSets) throws SQLException {
-		try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
-			// Bind parameters (assuming only one set of arguments for queries)
-			if (!argumentSets.isEmpty()) {
+		if (argumentSets.isEmpty()) {
+			try (Statement stmt = conn.createStatement()) {
+				try (ResultSet rs = stmt.executeQuery(sql)) {
+					List<Map<String, Object>> results = new ArrayList<>();
+					ResultSetMetaData metaData = rs.getMetaData();
+					int columnCount = metaData.getColumnCount();
+
+					while (rs.next()) {
+						Map<String, Object> row = new HashMap<>();
+						for (int i = 1; i <= columnCount; i++) {
+							row.put(metaData.getColumnName(i), rs.getObject(i));
+						}
+						results.add(row);
+					}
+
+					return createJsonResponse(true, results.size() + " rows", results);
+				}
+			}
+		} else {
+			try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
+				// Bind parameters (assuming only one set of arguments for queries)
 				List<Object> arguments = argumentSets.get(0);
 				for (int i = 0; i < arguments.size(); i++) {
 					pstmt.setObject(i + 1, arguments.get(i));
 				}
-			}
 
-			try (ResultSet rs = pstmt.executeQuery()) {
-				List<Map<String, Object>> results = new ArrayList<>();
-				ResultSetMetaData metaData = rs.getMetaData();
-				int columnCount = metaData.getColumnCount();
+				try (ResultSet rs = pstmt.executeQuery()) {
+					List<Map<String, Object>> results = new ArrayList<>();
+					ResultSetMetaData metaData = rs.getMetaData();
+					int columnCount = metaData.getColumnCount();
 
-				while (rs.next()) {
-					Map<String, Object> row = new HashMap<>();
-					for (int i = 1; i <= columnCount; i++) {
-						row.put(metaData.getColumnName(i), rs.getObject(i));
+					while (rs.next()) {
+						Map<String, Object> row = new HashMap<>();
+						for (int i = 1; i <= columnCount; i++) {
+							row.put(metaData.getColumnName(i), rs.getObject(i));
+						}
+						results.add(row);
 					}
-					results.add(row);
-				}
 
-				return createJsonResponse(true, results.size() + " rows", results);
+					return createJsonResponse(true, results.size() + " rows", results);
+				}
 			}
 		}
 	}
