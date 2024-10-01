@@ -228,50 +228,39 @@ public class DB {
 	}
 	
 	
-	public void init() throws SQLException, ClassNotFoundException {
+	public void init() throws SQLException {
 		switch(type) {
 		case SQLITE:
-			Class.forName("io.synclite.logger.SQLite");
 			SQLite.initialize(path, syncliteLoggerConfig, name);
 			break;
 		case SQLITE_APPENDER:
-			Class.forName("io.synclite.logger.SQLiteAppender");
 			SQLiteAppender.initialize(path, syncliteLoggerConfig, name);
 			break;		
 		case DUCKDB:
-			Class.forName("io.synclite.logger.DuckDB");
 			DuckDB.initialize(path, syncliteLoggerConfig, name);
 			break;
 		case DUCKDB_APPENDER:
-			Class.forName("io.synclite.logger.DuckDBAppender");
 			DuckDBAppender.initialize(path, syncliteLoggerConfig, name);
 			break;		
 		case H2:
-			Class.forName("io.synclite.logger.H2");
 			H2.initialize(path, syncliteLoggerConfig, name);
 			break;
 		case H2_APPENDER:
-			Class.forName("io.synclite.logger.H2Appender");
 			H2Appender.initialize(path, syncliteLoggerConfig, name);
 			break;		
 		case DERBY:
-			Class.forName("io.synclite.logger.Derby");
 			Derby.initialize(path, syncliteLoggerConfig, name);
 			break;
 		case DERBY_APPENDER:
-			Class.forName("io.synclite.logger.DerbyAppender");
 			DerbyAppender.initialize(path, syncliteLoggerConfig, name);
 			break;		
 		case HYPERSQL:
-			Class.forName("io.synclite.logger.HyperSQL");
 			HyperSQL.initialize(path, syncliteLoggerConfig, name);
 			break;
 		case HYPERSQL_APPENDER:
-			Class.forName("io.synclite.logger.HyperSQLAppender");
 			HyperSQLAppender.initialize(path, syncliteLoggerConfig, name);
 			break;	
 		case STREAMING:
-			Class.forName("io.synclite.logger.Streaming");
 			Streaming.initialize(path, syncliteLoggerConfig, name);
 			break;
 		}

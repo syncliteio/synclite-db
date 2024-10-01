@@ -153,7 +153,7 @@ public class ConfLoader {
 				throw new SyncLiteException("Please specify a positive numeric value for num-threads in configuration file");
 			}
 		} else {
-			this.numThreads = 4;
+			this.numThreads = Runtime.getRuntime().availableProcessors();
 		}
 
 		propValue = properties.get("idle-connection-timeout-ms");
