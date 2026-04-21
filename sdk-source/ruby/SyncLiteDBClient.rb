@@ -77,7 +77,7 @@ sql: drop table t1
 =end
 
 class SyncLiteDBResult
-  attr_accessor :result, :message, :result_set, :txn_handle, :resultset_handle, :has_more
+  attr_accessor :result, :message, :result_set, :txn_handle, :resultset_handle, :has_more, :column_metadata
 
   def initialize
     @result_set = []
@@ -139,6 +139,7 @@ class SyncLiteDBClient
     result.txn_handle = json_response['txn-handle'] if json_response.key?('txn-handle')
     result.resultset_handle = json_response['resultset-handle'] if json_response.key?('resultset-handle')
     result.has_more = json_response['has-more'] if json_response.key?('has-more')
+    result.column_metadata = json_response['resultset-metadata'] if json_response.key?('resultset-metadata')
     result
   end
 
@@ -188,7 +189,7 @@ class SyncLiteDBClient
     to_db_result(json_response)
   end
 
-  def self.execute_sql(db_path, txn_handle, sql, arguments = nil)
+  def self.execute_sql(db_path, txn_handle, sql, arguments = nil, data_format: nil, include_metadata: nil)
     json_request = {
       'db-path' => db_path.to_s,
       'sql' => sql,
@@ -196,17 +197,21 @@ class SyncLiteDBClient
     }.compact
 
 	json_request['txn-handle'] = txn_handle.to_s unless txn_handle.nil?
+    json_request['resultset-data-format'] = data_format unless data_format.nil?
+    json_request['resultset-include-metadata'] = include_metadata ? 'ON' : 'OFF' unless include_metadata.nil?
 
     json_response = process_request(json_request)
     to_db_result(json_response)
   end
 
-  def self.next_page(resultset_handle, resultset_pagination_size = nil)
+  def self.next_page(resultset_handle, resultset_pagination_size = nil, data_format: nil, include_metadata: nil)
     json_request = {
       'request-type' => 'next',
       'resultset-handle' => resultset_handle
     }
     json_request['resultset-pagination-size'] = resultset_pagination_size if !resultset_pagination_size.nil? && resultset_pagination_size.to_i > 0
+    json_request['resultset-data-format'] = data_format unless data_format.nil?
+    json_request['resultset-include-metadata'] = include_metadata ? 'ON' : 'OFF' unless include_metadata.nil?
 
     json_response = process_request(json_request)
     to_db_result(json_response)
@@ -272,12 +277,14 @@ class SyncLiteDBClient
     exit(1) unless r.result
 
     puts "========================================================"
-    puts "Executing select from table"
+    puts "Executing select from table (JSON format)"
     puts "========================================================"
     r = execute_sql(db_path, nil, 'select a, b from t1')
     puts "result: #{r.result}, message: #{r.message}"
 
-    puts "Selected Records:"
+    if r.column_metadata
+      puts r.column_metadata.map { |c| c['label'] }.join("\t")
+    end
     current = r
     loop do
       current.result_set.each do |rec|
@@ -287,6 +294,27 @@ class SyncLiteDBClient
       break unless current.has_more && current.resultset_handle
 
       current = next_page(current.resultset_handle)
+      raise "Next page call failed: #{current.message}" unless current.result
+    end
+
+    puts "========================================================"
+    puts "Executing select from table (DB format)"
+    puts "========================================================"
+    r = execute_sql(db_path, nil, 'select a, b from t1', nil, data_format: 'DB', include_metadata: true)
+    puts "result: #{r.result}, message: #{r.message}"
+
+    if r.column_metadata
+      puts r.column_metadata.map { |c| c['label'] }.join("\t")
+    end
+    current = r
+    loop do
+      current.result_set.each do |row|
+        puts row.map { |v| v.nil? ? 'null' : v.to_s }.join("\t")
+      end
+
+      break unless current.has_more && current.resultset_handle
+
+      current = next_page(current.resultset_handle, nil, data_format: 'DB')
       raise "Next page call failed: #{current.message}" unless current.result
     end
 

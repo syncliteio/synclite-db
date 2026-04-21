@@ -3,6 +3,7 @@ package com.synclite.db;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import java.io.BufferedReader;
@@ -202,6 +203,134 @@ public class SyncLiteDBIntegrationTest {
         JSONObject invalidNext = SyncLiteDBClient.processRequest(lastPageRequest);
         assertFalse(invalidNext.getBoolean("result"));
         assertEquals("ERR_INVALID_RESULTSET_HANDLE", invalidNext.getString("code"));
+
+        SyncLiteDBResult closeResult = SyncLiteDBClient.closeDB(dbPath);
+        assertTrue(closeResult.result);
+    }
+
+    @Test
+    public void testResultsetDataFormatAndMetadata() throws Exception {
+        Path dbPath = deviceDir.resolve("format-it.db");
+        SyncLiteDBClient.setAuthConfiguration(AUTH_TOKEN, APP_ID, APP_SECRET);
+
+        SyncLiteDBResult initializeResult = SyncLiteDBClient.initializeDB(dbPath, "SQLITE", "formatIT", loggerConfigPath);
+        assertTrue(initializeResult.result);
+
+        SyncLiteDBResult createTableResult = SyncLiteDBClient.executeSQL(dbPath, null,
+                "create table if not exists t3(id int, name text)", null);
+        assertTrue(createTableResult.result);
+
+        JSONArray args = new JSONArray()
+                .put(new JSONArray().put(1).put("one"))
+                .put(new JSONArray().put(2).put("two"))
+                .put(new JSONArray().put(3).put("three"));
+        SyncLiteDBResult insertResult = SyncLiteDBClient.executeSQL(dbPath, null,
+                "insert into t3 (id, name) values (?, ?)", args);
+        assertTrue(insertResult.result);
+
+        // ---- JSON format (default) with metadata ON (default) ----
+        SyncLiteDBResult jsonFmtResult = SyncLiteDBClient.executeSQL(dbPath, null,
+                "select id, name from t3 order by id", null, "JSON", true);
+        assertTrue(jsonFmtResult.result);
+
+        // metadata must be present and have 2 columns
+        assertNotNull("resultset-metadata must be present for JSON format with includeMetadata=ON",
+                jsonFmtResult.columnMetadata);
+        assertEquals(2, jsonFmtResult.columnMetadata.length());
+
+        // verify metadata fields
+        JSONObject idMeta = jsonFmtResult.columnMetadata.getJSONObject(0);
+        assertTrue(idMeta.has("name"));
+        assertTrue(idMeta.has("label"));
+        assertTrue(idMeta.has("type"));
+        assertTrue(idMeta.has("type-name"));
+
+        // rows must be JSON objects (col→val map)
+        assertNotNull(jsonFmtResult.resultSet);
+        assertEquals(3, jsonFmtResult.resultSet.length());
+        assertEquals(1, jsonFmtResult.resultSet.getJSONObject(0).getInt("id"));
+        assertEquals("one", jsonFmtResult.resultSet.getJSONObject(0).getString("name"));
+        assertEquals(2, jsonFmtResult.resultSet.getJSONObject(1).getInt("id"));
+        assertEquals(3, jsonFmtResult.resultSet.getJSONObject(2).getInt("id"));
+
+        // ---- JSON format with metadata OFF ----
+        SyncLiteDBResult noMetaResult = SyncLiteDBClient.executeSQL(dbPath, null,
+                "select id, name from t3 order by id", null, "JSON", false);
+        assertTrue(noMetaResult.result);
+        assertFalse("resultset-metadata must be absent when includeMetadata=OFF",
+                noMetaResult.columnMetadata != null);
+        assertNotNull(noMetaResult.resultSet);
+        assertEquals(3, noMetaResult.resultSet.length());
+        // rows still as JSON objects
+        assertEquals("one", noMetaResult.resultSet.getJSONObject(0).getString("name"));
+
+        // ---- DB format with metadata ON ----
+        SyncLiteDBResult dbFmtResult = SyncLiteDBClient.executeSQL(dbPath, null,
+                "select id, name from t3 order by id", null, "DB", true);
+        assertTrue(dbFmtResult.result);
+
+        // metadata must be present
+        assertNotNull("resultset-metadata must be present for DB format with includeMetadata=ON",
+                dbFmtResult.columnMetadata);
+        assertEquals(2, dbFmtResult.columnMetadata.length());
+        assertEquals("id", dbFmtResult.columnMetadata.getJSONObject(0).getString("label"));
+        assertEquals("name", dbFmtResult.columnMetadata.getJSONObject(1).getString("label"));
+
+        // rows must be arrays (positional values)
+        assertNotNull(dbFmtResult.resultSet);
+        assertEquals(3, dbFmtResult.resultSet.length());
+        JSONArray firstRow = dbFmtResult.resultSet.getJSONArray(0);
+        assertEquals(2, firstRow.length());
+        assertEquals(1, firstRow.getInt(0));
+        assertEquals("one", firstRow.getString(1));
+
+        JSONArray secondRow = dbFmtResult.resultSet.getJSONArray(1);
+        assertEquals(2, secondRow.getInt(0));
+
+        // ---- DB format + pagination with next ----
+        SyncLiteDBResult page1 = SyncLiteDBClient.executeSQL(dbPath, null,
+                "select id, name from t3 order by id", null, "DB", true);
+        // override pagination size via raw request to get 1 row per page
+        JSONObject page1Req = new JSONObject()
+                .put("db-path", dbPath.toString())
+                .put("sql", "select id, name from t3 order by id")
+                .put("resultset-data-format", "DB")
+                .put("resultset-include-metadata", "ON")
+                .put("resultset-pagination-size", 1);
+        JSONObject page1Resp = SyncLiteDBClient.processRequest(page1Req);
+        assertTrue(page1Resp.getBoolean("result"));
+        assertTrue(page1Resp.getBoolean("has-more"));
+        assertEquals(1, page1Resp.getJSONArray("resultset").length());
+        // resultset-metadata present on first page
+        assertTrue("resultset-metadata must be present on first page of DB format",
+                page1Resp.has("resultset-metadata"));
+        assertEquals(2, page1Resp.getJSONArray("resultset-metadata").length());
+        // first row is array
+        assertTrue(page1Resp.getJSONArray("resultset").get(0) instanceof JSONArray);
+        assertEquals(1, page1Resp.getJSONArray("resultset").getJSONArray(0).getInt(0));
+
+        String handle = page1Resp.getString("resultset-handle");
+
+        // next page — DB format, metadata OFF
+        SyncLiteDBResult page2 = SyncLiteDBClient.next(handle, 1, "DB", false);
+        assertTrue(page2.result);
+        assertTrue(page2.hasMore);
+        assertNull("resultset-metadata must be absent when includeMetadata=OFF on next",
+                page2.columnMetadata);
+        assertNotNull(page2.resultSet);
+        assertEquals(1, page2.resultSet.length());
+        JSONArray page2Row = page2.resultSet.getJSONArray(0);
+        assertEquals(2, page2Row.getInt(0));
+        assertEquals("two", page2Row.getString(1));
+
+        // last page
+        SyncLiteDBResult page3 = SyncLiteDBClient.next(page2.resultsetHandle, 1, "DB", false);
+        assertTrue(page3.result);
+        assertFalse(page3.hasMore);
+        assertEquals(1, page3.resultSet.length());
+        JSONArray page3Row = page3.resultSet.getJSONArray(0);
+        assertEquals(3, page3Row.getInt(0));
+        assertEquals("three", page3Row.getString(1));
 
         SyncLiteDBResult closeResult = SyncLiteDBClient.closeDB(dbPath);
         assertTrue(closeResult.result);

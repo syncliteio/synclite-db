@@ -105,6 +105,7 @@ struct SyncLiteDBResult {
     std::string txnHandle;
     std::string resultsetHandle;
     bool hasMore = false;
+    json columnMetadata;
 };
 
 static SyncLiteDBResult toDBResult(const json& jsonResponse) {
@@ -122,6 +123,9 @@ static SyncLiteDBResult toDBResult(const json& jsonResponse) {
     }
     if (jsonResponse.contains("has-more")) {
         dbResult.hasMore = jsonResponse["has-more"].get<bool>();
+    }
+    if (jsonResponse.contains("resultset-metadata")) {
+        dbResult.columnMetadata = jsonResponse["resultset-metadata"];
     }
     return dbResult;
 }
@@ -341,7 +345,7 @@ SyncLiteDBResult rollbackTransaction(const fs::path& dbPath, const std::string& 
     }
 }
 
-SyncLiteDBResult executeSQL(const fs::path& dbPath, const std::string& txnHandle, const std::string& sql, const json& arguments) {
+SyncLiteDBResult executeSQL(const fs::path& dbPath, const std::string& txnHandle, const std::string& sql, const json& arguments, const std::string& dataFormat, bool includeMetadata) {
     try {
         json jsonRequest;
         jsonRequest["db-path"] = dbPath.string();
@@ -352,6 +356,10 @@ SyncLiteDBResult executeSQL(const fs::path& dbPath, const std::string& txnHandle
         if (!arguments.empty()) {
             jsonRequest["arguments"] = arguments;
         }
+        if (!dataFormat.empty()) {
+            jsonRequest["resultset-data-format"] = dataFormat;
+        }
+        jsonRequest["resultset-include-metadata"] = includeMetadata ? "ON" : "OFF";
 
         json jsonResponse = processRequest(jsonRequest);
 
@@ -362,7 +370,11 @@ SyncLiteDBResult executeSQL(const fs::path& dbPath, const std::string& txnHandle
     }
 }
 
-SyncLiteDBResult next(const std::string& resultsetHandle, int resultsetPaginationSize) {
+SyncLiteDBResult executeSQL(const fs::path& dbPath, const std::string& txnHandle, const std::string& sql, const json& arguments) {
+    return executeSQL(dbPath, txnHandle, sql, arguments, "", true);
+}
+
+SyncLiteDBResult next(const std::string& resultsetHandle, int resultsetPaginationSize, const std::string& dataFormat, bool includeMetadata) {
     try {
         json jsonRequest;
         jsonRequest["request-type"] = "next";
@@ -370,6 +382,10 @@ SyncLiteDBResult next(const std::string& resultsetHandle, int resultsetPaginatio
         if (resultsetPaginationSize > 0) {
             jsonRequest["resultset-pagination-size"] = resultsetPaginationSize;
         }
+        if (!dataFormat.empty()) {
+            jsonRequest["resultset-data-format"] = dataFormat;
+        }
+        jsonRequest["resultset-include-metadata"] = includeMetadata ? "ON" : "OFF";
 
         json jsonResponse = processRequest(jsonRequest);
         return toDBResult(jsonResponse);
@@ -377,6 +393,10 @@ SyncLiteDBResult next(const std::string& resultsetHandle, int resultsetPaginatio
     catch (const std::exception& e) {
         throw std::runtime_error("Failed to fetch next page for resultset-handle: " + resultsetHandle + " : " + e.what());
     }
+}
+
+SyncLiteDBResult next(const std::string& resultsetHandle, int resultsetPaginationSize) {
+    return next(resultsetHandle, resultsetPaginationSize, "", true);
 }
 
 SyncLiteDBResult closeDB(const fs::path& dbPath) {
@@ -481,9 +501,9 @@ int main() {
             return 1;
         }
 
-        // Execute select
+        // Execute select (JSON format - default, records as {colName: colValue} objects)
         std::cout << "========================================================\n";
-        std::cout << "Executing select from table\n";
+        std::cout << "Executing select from table (JSON format)\n";
         std::cout << "========================================================\n";
         r = executeSQL(dbPath, "", "select * from t1", {});
         std::cout << "result: " << r.result << "\n";
@@ -491,22 +511,74 @@ int main() {
         if (!r.result) {
             return 1;
         }
-        std::cout << "Selected Records:\n";
-        SyncLiteDBResult current = r;
-        while (true) {
-            if (!current.resultSet.is_null()) {
-                for (const auto& rec : current.resultSet) {
-                    std::cout << "a = " << rec.value("a", json(nullptr)) << ", b = " << rec.value("b", json(nullptr)) << "\n";
+        if (!r.columnMetadata.is_null() && r.columnMetadata.is_array()) {
+            bool first = true;
+            for (const auto& col : r.columnMetadata) {
+                if (!first) std::cout << "\t";
+                std::cout << col.value("label", "");
+                first = false;
+            }
+            std::cout << "\n";
+        }
+        {
+            SyncLiteDBResult current = r;
+            while (true) {
+                if (!current.resultSet.is_null()) {
+                    for (const auto& rec : current.resultSet) {
+                        std::cout << "a = " << rec.value("a", json(nullptr)) << ", b = " << rec.value("b", json(nullptr)) << "\n";
+                    }
+                }
+
+                if (!current.hasMore || current.resultsetHandle.empty()) {
+                    break;
+                }
+
+                current = next(current.resultsetHandle, 0);
+                if (!current.result) {
+                    throw std::runtime_error("Next page call failed: " + current.message);
                 }
             }
+        }
 
-            if (!current.hasMore || current.resultsetHandle.empty()) {
-                break;
+        // Execute select (DB format - records as value arrays, column order matches columnMetadata)
+        std::cout << "========================================================\n";
+        std::cout << "Executing select from table (DB format)\n";
+        std::cout << "========================================================\n";
+        r = executeSQL(dbPath, "", "select * from t1", {}, "DB", true);
+        std::cout << "result: " << r.result << "\n";
+        std::cout << "message: " << r.message << "\n";
+        if (!r.columnMetadata.is_null() && r.columnMetadata.is_array()) {
+            bool first = true;
+            for (const auto& col : r.columnMetadata) {
+                if (!first) std::cout << "\t";
+                std::cout << col.value("label", "");
+                first = false;
             }
+            std::cout << "\n";
+        }
+        {
+            SyncLiteDBResult current = r;
+            while (true) {
+                if (!current.resultSet.is_null()) {
+                    for (const auto& row : current.resultSet) {
+                        bool first = true;
+                        for (const auto& val : row) {
+                            if (!first) std::cout << "\t";
+                            std::cout << val;
+                            first = false;
+                        }
+                        std::cout << "\n";
+                    }
+                }
 
-            current = next(current.resultsetHandle, 0);
-            if (!current.result) {
-                throw std::runtime_error("Next page call failed: " + current.message);
+                if (!current.hasMore || current.resultsetHandle.empty()) {
+                    break;
+                }
+
+                current = next(current.resultsetHandle, 0, "DB", true);
+                if (!current.result) {
+                    throw std::runtime_error("Next page call failed: " + current.message);
+                }
             }
         }
 

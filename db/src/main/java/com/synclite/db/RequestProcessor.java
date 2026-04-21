@@ -10,6 +10,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Properties;
 import java.util.UUID;
 
@@ -97,8 +98,17 @@ final class RequestProcessor {
 				return Main.createJsonResponse(false, "Invalid resultset-pagination-size: " + e.getMessage(), null, "ERR_INVALID_REQUEST", protocolVersion);
 			}
 
+			String dataFormat;
+			try {
+				dataFormat = parseResultsetDataFormat(jsonRequest);
+			} catch (Exception e) {
+				return Main.createJsonResponse(false, "Invalid resultset-data-format: " + e.getMessage(), null, "ERR_INVALID_REQUEST", protocolVersion);
+			}
+
+			boolean includeMetadata = parseResultsetIncludeMetadata(jsonRequest);
+
 			if ("next".equals(sqlToCheck)) {
-				return fetchNextResultSetPage(jsonRequest, requesterPrincipal, paginationSize, protocolVersion);
+				return fetchNextResultSetPage(jsonRequest, requesterPrincipal, paginationSize, protocolVersion, dataFormat, includeMetadata);
 			}
 
 			if (sql == null || sql.isBlank()) {
@@ -239,7 +249,7 @@ final class RequestProcessor {
 						return Main.createJsonResponse(false, "Connection closed for specified txn-handle : " + txnHandle, null, "ERR_INVALID_REQUEST", protocolVersion);
 					}
 					try {
-						return executeSql(dbConn.getConnection(), db, sql, argumentSets, requesterPrincipal, paginationSize, protocolVersion);
+					return executeSql(dbConn.getConnection(), db, sql, argumentSets, requesterPrincipal, paginationSize, protocolVersion, dataFormat, includeMetadata);
 					} catch (Exception e) {
 						return Main.createJsonResponse(false, "Database error: " + e.getMessage(), null, "ERR_DATABASE", protocolVersion);
 					}
@@ -257,7 +267,7 @@ final class RequestProcessor {
 			Connection conn = null;
 			try {
 				conn = DriverManager.getConnection(db.getURL(), props);
-				String response = executeSql(conn, db, sql, argumentSets, requesterPrincipal, paginationSize, protocolVersion);
+				String response = executeSql(conn, db, sql, argumentSets, requesterPrincipal, paginationSize, protocolVersion, dataFormat, includeMetadata);
 				if (!db.isResultsetConnectionRetained(conn)) {
 					conn.close();
 				}
@@ -279,10 +289,10 @@ final class RequestProcessor {
 		}
 	}
 
-	private static String executeSql(Connection conn, DB db, String sql, List<List<Object>> argumentSets, String requesterPrincipal, int paginationSize, String protocolVersion) throws SQLException {
+	private static String executeSql(Connection conn, DB db, String sql, List<List<Object>> argumentSets, String requesterPrincipal, int paginationSize, String protocolVersion, String dataFormat, boolean includeMetadata) throws SQLException {
 		boolean isQuery = sql.trim().toUpperCase().startsWith("SELECT");
 		if (isQuery) {
-			return executeQuery(conn, db, sql, argumentSets, requesterPrincipal, paginationSize, protocolVersion);
+			return executeQuery(conn, db, sql, argumentSets, requesterPrincipal, paginationSize, protocolVersion, dataFormat, includeMetadata);
 		}
 		if (argumentSets.size() > 0) {
 			return executeBatch(conn, sql, argumentSets);
@@ -290,7 +300,7 @@ final class RequestProcessor {
 		return executeUpdate(conn, sql);
 	}
 
-	private static String executeQuery(Connection conn, DB db, String sql, List<List<Object>> argumentSets, String requesterPrincipal, int paginationSize, String protocolVersion) throws SQLException {
+	private static String executeQuery(Connection conn, DB db, String sql, List<List<Object>> argumentSets, String requesterPrincipal, int paginationSize, String protocolVersion, String dataFormat, boolean includeMetadata) throws SQLException {
 		Statement stmt = null;
 		ResultSet rs = null;
 		try {
@@ -308,7 +318,9 @@ final class RequestProcessor {
 			}
 
 			DB.ResultSetPage page = db.createPagedResultSetPage(conn, stmt, rs, requesterPrincipal, paginationSize);
-			return Main.createJsonResponseWithHandle(true, page.rows.size() + " rows", page.rows, "OK", protocolVersion, page.resultsetHandle, Boolean.valueOf(page.hasMore));
+			JSONArray resultsetJson = formatRows(page.rows, dataFormat);
+			JSONArray metadataJson = includeMetadata ? page.columnMetadata : null;
+			return Main.createJsonResponseWithHandle(true, page.rows.size() + " rows", resultsetJson, "OK", protocolVersion, page.resultsetHandle, Boolean.valueOf(page.hasMore), metadataJson);
 		} catch (SQLException e) {
 			if (rs != null) {
 				try {
@@ -326,7 +338,7 @@ final class RequestProcessor {
 		}
 	}
 
-	private static String fetchNextResultSetPage(JSONObject jsonRequest, String requesterPrincipal, int requestedPaginationSize, String protocolVersion) {
+	private static String fetchNextResultSetPage(JSONObject jsonRequest, String requesterPrincipal, int requestedPaginationSize, String protocolVersion, String dataFormat, boolean includeMetadata) {
 		if (!jsonRequest.has("resultset-handle")) {
 			return Main.createJsonResponse(false, "resultset-handle must be specified for next", null, "ERR_INVALID_REQUEST", protocolVersion);
 		}
@@ -339,7 +351,9 @@ final class RequestProcessor {
 		}
 		try {
 			DB.ResultSetPage page = DB.fetchNextResultSetPage(handle, requesterPrincipal, requestedPaginationSize);
-			return Main.createJsonResponseWithHandle(true, page.rows.size() + " rows", page.rows, "OK", protocolVersion, page.resultsetHandle, Boolean.valueOf(page.hasMore));
+			JSONArray resultsetJson = formatRows(page.rows, dataFormat);
+			JSONArray metadataJson = includeMetadata ? page.columnMetadata : null;
+			return Main.createJsonResponseWithHandle(true, page.rows.size() + " rows", resultsetJson, "OK", protocolVersion, page.resultsetHandle, Boolean.valueOf(page.hasMore), metadataJson);
 		} catch (SQLException e) {
 			if (e.getMessage() != null && e.getMessage().contains("not owned by requester")) {
 				return Main.createJsonResponse(false, "resultset-handle is not owned by requester", null, "ERR_RESULTSET_OWNERSHIP", protocolVersion);
@@ -393,5 +407,44 @@ final class RequestProcessor {
 			throw new IllegalArgumentException("resultset-pagination-size must be a positive integer");
 		}
 		return Integer.valueOf(pageSize);
+	}
+
+	private static String parseResultsetDataFormat(JSONObject jsonRequest) {
+		if (jsonRequest == null || !jsonRequest.has("resultset-data-format")) {
+			return "JSON";
+		}
+		String fmt = String.valueOf(jsonRequest.get("resultset-data-format")).trim().toUpperCase();
+		if (!"JSON".equals(fmt) && !"DB".equals(fmt)) {
+			throw new IllegalArgumentException("resultset-data-format must be JSON or DB");
+		}
+		return fmt;
+	}
+
+	private static boolean parseResultsetIncludeMetadata(JSONObject jsonRequest) {
+		if (jsonRequest == null || !jsonRequest.has("resultset-include-metadata")) {
+			return true;
+		}
+		String val = String.valueOf(jsonRequest.get("resultset-include-metadata")).trim().toUpperCase();
+		return !"OFF".equals(val);
+	}
+
+	private static JSONArray formatRows(List<Map<String, Object>> rows, String dataFormat) {
+		JSONArray resultsetJson = new JSONArray();
+		for (Map<String, Object> row : rows) {
+			if ("DB".equals(dataFormat)) {
+				JSONArray rowArray = new JSONArray();
+				for (Object val : row.values()) {
+					rowArray.put(val != null ? val : JSONObject.NULL);
+				}
+				resultsetJson.put(rowArray);
+			} else {
+				JSONObject rowObj = new JSONObject();
+				for (Map.Entry<String, Object> entry : row.entrySet()) {
+					rowObj.put(entry.getKey(), entry.getValue() != null ? entry.getValue() : JSONObject.NULL);
+				}
+				resultsetJson.put(rowObj);
+			}
+		}
+		return resultsetJson;
 	}
 }

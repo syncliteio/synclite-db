@@ -26,6 +26,7 @@ import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
@@ -34,6 +35,9 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 import io.synclite.logger.*;
 
@@ -129,8 +133,9 @@ public class DB {
 		private Map<String, Object> bufferedRow;
 		private int paginationSize;
 		private long lastUsedMs;
+		final JSONArray columnMetadata;
 
-		private ResultSetPageState(UUID handle, Path dbPath, String requesterPrincipal, Connection connection, Statement statement, ResultSet resultSet, Map<String, Object> bufferedRow, int paginationSize) {
+		private ResultSetPageState(UUID handle, Path dbPath, String requesterPrincipal, Connection connection, Statement statement, ResultSet resultSet, Map<String, Object> bufferedRow, int paginationSize, JSONArray columnMetadata) {
 			this.handle = handle;
 			this.dbPath = dbPath;
 			this.requesterPrincipal = requesterPrincipal;
@@ -140,6 +145,7 @@ public class DB {
 			this.bufferedRow = bufferedRow;
 			this.paginationSize = paginationSize;
 			this.lastUsedMs = System.currentTimeMillis();
+			this.columnMetadata = columnMetadata;
 		}
 
 		private void touch() {
@@ -166,20 +172,50 @@ public class DB {
 		public final List<Map<String, Object>> rows;
 		public final UUID resultsetHandle;
 		public final boolean hasMore;
+		public final JSONArray columnMetadata;
 
-		public ResultSetPage(List<Map<String, Object>> rows, UUID resultsetHandle, boolean hasMore) {
+		public ResultSetPage(List<Map<String, Object>> rows, UUID resultsetHandle, boolean hasMore, JSONArray columnMetadata) {
 			this.rows = rows;
 			this.resultsetHandle = resultsetHandle;
 			this.hasMore = hasMore;
+			this.columnMetadata = columnMetadata;
 		}
 	}
 
 	private static Map<String, Object> readCurrentRow(ResultSet rs, ResultSetMetaData metaData, int columnCount) throws SQLException {
-		Map<String, Object> row = new HashMap<String, Object>();
+		Map<String, Object> row = new LinkedHashMap<String, Object>();
 		for (int i = 1; i <= columnCount; i++) {
 			row.put(metaData.getColumnLabel(i), rs.getObject(i));
 		}
 		return row;
+	}
+
+	static JSONArray extractColumnMetadata(ResultSetMetaData metaData, int columnCount) throws SQLException {
+		JSONArray metadata = new JSONArray();
+		for (int i = 1; i <= columnCount; i++) {
+			JSONObject col = new JSONObject();
+			col.put("name", metaData.getColumnName(i));
+			col.put("label", metaData.getColumnLabel(i));
+			col.put("type", metaData.getColumnType(i));
+			col.put("type-name", metaData.getColumnTypeName(i));
+			col.put("display-size", metaData.getColumnDisplaySize(i));
+			col.put("precision", metaData.getPrecision(i));
+			col.put("scale", metaData.getScale(i));
+			col.put("nullable", metaData.isNullable(i));
+			col.put("auto-increment", metaData.isAutoIncrement(i));
+			col.put("case-sensitive", metaData.isCaseSensitive(i));
+			col.put("searchable", metaData.isSearchable(i));
+			col.put("currency", metaData.isCurrency(i));
+			col.put("signed", metaData.isSigned(i));
+			col.put("read-only", metaData.isReadOnly(i));
+			col.put("writable", metaData.isWritable(i));
+			col.put("catalog-name", metaData.getCatalogName(i));
+			col.put("schema-name", metaData.getSchemaName(i));
+			col.put("table-name", metaData.getTableName(i));
+			col.put("class-name", metaData.getColumnClassName(i));
+			metadata.put(col);
+		}
+		return metadata;
 	}
 
 	private static void closeAndRemoveResultSetHandle(UUID handle) {
@@ -248,6 +284,7 @@ public class DB {
 		List<Map<String, Object>> results = new ArrayList<Map<String, Object>>();
 		ResultSetMetaData metaData = rs.getMetaData();
 		int columnCount = metaData.getColumnCount();
+		JSONArray columnMetadata = extractColumnMetadata(metaData, columnCount);
 
 		while (results.size() < paginationSize + 1 && rs.next()) {
 			results.add(readCurrentRow(rs, metaData, columnCount));
@@ -256,15 +293,15 @@ public class DB {
 		if (results.size() <= paginationSize) {
 			rs.close();
 			stmt.close();
-			return new ResultSetPage(results, null, false);
+			return new ResultSetPage(results, null, false, columnMetadata);
 		}
 
 		Map<String, Object> bufferedRow = results.remove(results.size() - 1);
 		String effectiveRequester = requesterPrincipal == null ? "anonymous" : requesterPrincipal;
 		UUID handle = UUID.randomUUID();
-		ResultSetPageState state = new ResultSetPageState(handle, this.path, effectiveRequester, conn, stmt, rs, bufferedRow, paginationSize);
+		ResultSetPageState state = new ResultSetPageState(handle, this.path, effectiveRequester, conn, stmt, rs, bufferedRow, paginationSize, columnMetadata);
 		openResultSets.put(handle, state);
-		return new ResultSetPage(results, handle, true);
+		return new ResultSetPage(results, handle, true, columnMetadata);
 	}
 
 	public static ResultSetPage fetchNextResultSetPage(UUID handle, String requesterPrincipal, int requestedPaginationSize) throws SQLException {
@@ -296,13 +333,14 @@ public class DB {
 			}
 
 			if (results.size() <= pageSize) {
+				JSONArray columnMetadata = state.columnMetadata;
 				closeAndRemoveResultSetHandle(handle);
-				return new ResultSetPage(results, null, false);
+				return new ResultSetPage(results, null, false, columnMetadata);
 			}
 
 			state.bufferedRow = results.remove(results.size() - 1);
 			state.touch();
-			return new ResultSetPage(results, handle, true);
+			return new ResultSetPage(results, handle, true, state.columnMetadata);
 		} catch (Exception e) {
 			closeAndRemoveResultSetHandle(handle);
 			throw new SQLException("Failed to fetch next page : " + e.getMessage(), e);

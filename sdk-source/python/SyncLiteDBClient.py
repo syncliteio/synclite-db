@@ -81,13 +81,14 @@ sql: drop table t1
  
 """
 class SyncLiteDBResult:
-    def __init__(self, result, message, result_set=None, txn_handle=None, resultset_handle=None, has_more=None):
+    def __init__(self, result, message, result_set=None, txn_handle=None, resultset_handle=None, has_more=None, column_metadata=None):
         self.result = result
         self.message = message
         self.result_set = result_set
         self.txn_handle = txn_handle
         self.resultset_handle = resultset_handle
         self.has_more = has_more
+        self.column_metadata = column_metadata
 
 
 def _to_result(json_response):
@@ -97,7 +98,8 @@ def _to_result(json_response):
         result_set=json_response.get('resultset') if 'resultset' in json_response else None,
         txn_handle=json_response.get('txn-handle') if 'txn-handle' in json_response else None,
         resultset_handle=json_response.get('resultset-handle') if 'resultset-handle' in json_response else None,
-        has_more=json_response.get('has-more') if 'has-more' in json_response else None
+        has_more=json_response.get('has-more') if 'has-more' in json_response else None,
+        column_metadata=json_response.get('resultset-metadata') if 'resultset-metadata' in json_response else None
     )
 
 # The base URL for the API
@@ -226,7 +228,7 @@ def rollback_transaction(db_path, txn_handle):
     except Exception as e:
         raise Exception(f"Failed to rollback transaction on DB: {str(db_path)} : {str(e)}")
 
-def execute_sql(db_path, txn_handle, sql, arguments):
+def execute_sql(db_path, txn_handle, sql, arguments, data_format=None, include_metadata=None):
     try:
         json_request = {
             "db-path": str(db_path),
@@ -238,6 +240,12 @@ def execute_sql(db_path, txn_handle, sql, arguments):
 
         if arguments:
             json_request["arguments"] = arguments
+
+        if data_format is not None:
+            json_request["resultset-data-format"] = data_format
+
+        if include_metadata is not None:
+            json_request["resultset-include-metadata"] = "ON" if include_metadata else "OFF"
         
         json_response = process_request(json_request)
         
@@ -246,7 +254,7 @@ def execute_sql(db_path, txn_handle, sql, arguments):
         raise Exception(f"Failed to rollback transaction on DB: {str(db_path)} : {str(e)}")
 
 
-def next_page(resultset_handle, resultset_pagination_size=None):
+def next_page(resultset_handle, resultset_pagination_size=None, data_format=None, include_metadata=None):
     try:
         json_request = {
             "request-type": "next",
@@ -254,6 +262,10 @@ def next_page(resultset_handle, resultset_pagination_size=None):
         }
         if resultset_pagination_size and resultset_pagination_size > 0:
             json_request["resultset-pagination-size"] = resultset_pagination_size
+        if data_format is not None:
+            json_request["resultset-data-format"] = data_format
+        if include_metadata is not None:
+            json_request["resultset-include-metadata"] = "ON" if include_metadata else "OFF"
 
         json_response = process_request(json_request)
         return _to_result(json_response)
@@ -328,14 +340,15 @@ if not r.result:
 print("=" * 56)
 
 
-# Select from table
+# Select from table (JSON format - default, records as {colName: colValue} dicts)
 print("=" * 56)
-print("Executing select from table")
+print("Executing select from table (JSON format)")
 print("=" * 56)
 r = execute_sql(db_path, None, "select a, b from t1", None)
 print(f"result : {r.result}")
 print(f"message : {r.message}")
-print("Selected Records: ")
+if r.column_metadata:
+    print("\t".join(col['label'] for col in r.column_metadata))
 current = r
 while True:
     if current.result_set:
@@ -344,6 +357,29 @@ while True:
     if not current.has_more or not current.resultset_handle:
         break
     current = next_page(current.resultset_handle)
+    if not current.result:
+        print(f"next failed: {current.message}")
+        sys.exit(1)
+print("=" * 56)
+
+
+# Select from table (DB format - records as value arrays, column order matches metadata)
+print("=" * 56)
+print("Executing select from table (DB format)")
+print("=" * 56)
+r = execute_sql(db_path, None, "select a, b from t1", None, data_format="DB", include_metadata=True)
+print(f"result : {r.result}")
+print(f"message : {r.message}")
+if r.column_metadata:
+    print("\t".join(col['label'] for col in r.column_metadata))
+current = r
+while True:
+    if current.result_set:
+        for row in current.result_set:
+            print("\t".join(str(v) if v is not None else "null" for v in row))
+    if not current.has_more or not current.resultset_handle:
+        break
+    current = next_page(current.resultset_handle, data_format="DB")
     if not current.result:
         print(f"next failed: {current.message}")
         sys.exit(1)

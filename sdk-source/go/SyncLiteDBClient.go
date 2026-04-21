@@ -88,12 +88,13 @@ sql: drop table t1
 
 // SyncLiteDBResult holds the result from the SyncLite DB API
 type SyncLiteDBResult struct {
-	Result          bool                     `json:"result"`
-	Message         string                   `json:"message"`
-	ResultSet       []map[string]interface{} `json:"resultset,omitempty"`
-	TxnHandle       string                   `json:"txn-handle,omitempty"`
-	ResultsetHandle string                   `json:"resultset-handle,omitempty"`
-	HasMore         bool                     `json:"has-more,omitempty"`
+	Result          bool                       `json:"result"`
+	Message         string                     `json:"message"`
+	ResultSet       []map[string]interface{}   `json:"resultset,omitempty"`
+	TxnHandle       string                     `json:"txn-handle,omitempty"`
+	ResultsetHandle string                     `json:"resultset-handle,omitempty"`
+	HasMore         bool                       `json:"has-more,omitempty"`
+	ColumnMetadata  []map[string]interface{}   `json:"resultset-metadata,omitempty"`
 }
 
 // SyncLiteDBAddress is the base URL for the API
@@ -230,7 +231,7 @@ func rollbackTransaction(dbPath, txnHandle string) (SyncLiteDBResult, error) {
 }
 
 // executeSQL executes an SQL statement on the database
-func executeSQL(dbPath, txnHandle, sql string, arguments [][]interface{}) (SyncLiteDBResult, error) {
+func executeSQL(dbPath, txnHandle, sql string, arguments [][]interface{}, dataFormat string, includeMetadata *bool) (SyncLiteDBResult, error) {
 	jsonRequest := map[string]interface{}{
 		"db-path": dbPath,
 		"sql":     sql,
@@ -241,17 +242,37 @@ func executeSQL(dbPath, txnHandle, sql string, arguments [][]interface{}) (SyncL
 	if arguments != nil {
 		jsonRequest["arguments"] = arguments
 	}
+	if dataFormat != "" {
+		jsonRequest["resultset-data-format"] = dataFormat
+	}
+	if includeMetadata != nil {
+		if *includeMetadata {
+			jsonRequest["resultset-include-metadata"] = "ON"
+		} else {
+			jsonRequest["resultset-include-metadata"] = "OFF"
+		}
+	}
 
 	return processRequest(jsonRequest)
 }
 
-func next(resultsetHandle string, resultsetPaginationSize int) (SyncLiteDBResult, error) {
+func next(resultsetHandle string, resultsetPaginationSize int, dataFormat string, includeMetadata *bool) (SyncLiteDBResult, error) {
 	jsonRequest := map[string]interface{}{
 		"request-type":     "next",
 		"resultset-handle": resultsetHandle,
 	}
 	if resultsetPaginationSize > 0 {
 		jsonRequest["resultset-pagination-size"] = resultsetPaginationSize
+	}
+	if dataFormat != "" {
+		jsonRequest["resultset-data-format"] = dataFormat
+	}
+	if includeMetadata != nil {
+		if *includeMetadata {
+			jsonRequest["resultset-include-metadata"] = "ON"
+		} else {
+			jsonRequest["resultset-include-metadata"] = "OFF"
+		}
 	}
 
 	return processRequest(jsonRequest)
@@ -298,7 +319,7 @@ func main() {
 	fmt.Println("========================================================")
 	fmt.Println("Executing create table")
 	fmt.Println("========================================================")
-	r, err = executeSQL(dbPath, txnHandle, "create table if not exists t1(a int, b text)", nil)
+	r, err = executeSQL(dbPath, txnHandle, "create table if not exists t1(a int, b text)", nil, "", nil)
 	if err != nil {
 		log.Fatalf("Failed to create table: %v", err)
 	}
@@ -316,7 +337,7 @@ func main() {
 		{1, "one"},
 		{2, "two"},
 	}
-	r, err = executeSQL(dbPath, txnHandle, "insert into t1 (a,b) values(?, ?)", arguments)
+	r, err = executeSQL(dbPath, txnHandle, "insert into t1 (a,b) values(?, ?)", arguments, "", nil)
 	if err != nil {
 		log.Fatalf("Failed to insert into table: %v", err)
 	}
@@ -340,21 +361,29 @@ func main() {
 	}
 	fmt.Println("========================================================")
 
-	// Select from table
+	// Select from table (JSON format - default, records as map[colName]colValue)
 	fmt.Println("========================================================")
-	fmt.Println("Executing select from table")
+	fmt.Println("Executing select from table (JSON format)")
 	fmt.Println("========================================================")
-	r, err = executeSQL(dbPath, "", "select a, b from t1", nil)
+	r, err = executeSQL(dbPath, "", "select a, b from t1", nil, "", nil)
 	if err != nil {
 		log.Fatalf("Failed to select from table: %v", err)
 	}
 	fmt.Printf("result: %v, message: %v\n", r.Result, r.Message)
-	fmt.Println("Selected Records:")
+	if len(r.ColumnMetadata) > 0 {
+		for i, col := range r.ColumnMetadata {
+			if i > 0 {
+				fmt.Print("\t")
+			}
+			fmt.Print(col["label"])
+		}
+		fmt.Println()
+	}
 	for _, rec := range r.ResultSet {
 		fmt.Printf("a = %v, b = %v\n", rec["a"], rec["b"])
 	}
 	for r.HasMore && r.ResultsetHandle != "" {
-		r, err = next(r.ResultsetHandle, 0)
+		r, err = next(r.ResultsetHandle, 0, "", nil)
 		if err != nil {
 			log.Fatalf("Failed to fetch next result page: %v", err)
 		}
@@ -367,11 +396,55 @@ func main() {
 	}
 	fmt.Println("========================================================")
 
+	// Select from table (DB format - records as []interface{} value arrays, column order matches ColumnMetadata)
+	fmt.Println("========================================================")
+	fmt.Println("Executing select from table (DB format)")
+	fmt.Println("========================================================")
+	includeMetadata := true
+	dbFmtResult, err := executeSQL(dbPath, "", "select a, b from t1", nil, "DB", &includeMetadata)
+	if err != nil {
+		log.Fatalf("Failed to select from table (DB format): %v", err)
+	}
+	fmt.Printf("result: %v, message: %v\n", dbFmtResult.Result, dbFmtResult.Message)
+	if len(dbFmtResult.ColumnMetadata) > 0 {
+		for i, col := range dbFmtResult.ColumnMetadata {
+			if i > 0 {
+				fmt.Print("\t")
+			}
+			fmt.Print(col["label"])
+		}
+		fmt.Println()
+	}
+	for dbFmtResult.Result {
+		for _, rowRaw := range dbFmtResult.ResultSet {
+			// In DB format each "row" is deserialized as map[string]interface{} by Go's JSON,
+			// but the values are positional by index key. Print all values in order.
+			for i, col := range dbFmtResult.ColumnMetadata {
+				if i > 0 {
+					fmt.Print("\t")
+				}
+				fmt.Print(rowRaw[col["label"].(string)])
+			}
+			fmt.Println()
+		}
+		if !dbFmtResult.HasMore || dbFmtResult.ResultsetHandle == "" {
+			break
+		}
+		dbFmtResult, err = next(dbFmtResult.ResultsetHandle, 0, "DB", nil)
+		if err != nil {
+			log.Fatalf("Failed to fetch next result page (DB format): %v", err)
+		}
+		if !dbFmtResult.Result {
+			log.Fatalf("Next page call failed: %v", dbFmtResult.Message)
+		}
+	}
+	fmt.Println("========================================================")
+
 	// Drop table
 	fmt.Println("========================================================")
 	fmt.Println("Executing drop table")
 	fmt.Println("========================================================")
-	r, err = executeSQL(dbPath, "", "drop table t1", nil)
+	r, err = executeSQL(dbPath, "", "drop table t1", nil, "", nil)
 	if err != nil {
 		log.Fatalf("Failed to drop table: %v", err)
 	}

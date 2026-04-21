@@ -25,6 +25,9 @@ public class SyncLiteDBClient {
         public String message;
         public JSONArray resultSet;
         public String txnHandle;
+        public String resultsetHandle;
+        public boolean hasMore;
+        public JSONArray columnMetadata;
     }
 
     private static String syncLiteDBAddress = "http://localhost:5555";
@@ -215,6 +218,11 @@ public class SyncLiteDBClient {
 
     public static SyncLiteDBResult executeSQL(Path dbPath, String txnHandle, String sql, JSONArray arguments)
             throws SQLException {
+        return executeSQL(dbPath, txnHandle, sql, arguments, null, null);
+    }
+
+    public static SyncLiteDBResult executeSQL(Path dbPath, String txnHandle, String sql, JSONArray arguments,
+            String dataFormat, Boolean includeMetadata) throws SQLException {
         SyncLiteDBResult dbResult;
         try {
             JSONObject jsonRequest = new JSONObject();
@@ -226,17 +234,65 @@ public class SyncLiteDBClient {
             if (arguments != null) {
                 jsonRequest.put("arguments", arguments);
             }
+            if (dataFormat != null) {
+                jsonRequest.put("resultset-data-format", dataFormat);
+            }
+            if (includeMetadata != null) {
+                jsonRequest.put("resultset-include-metadata", includeMetadata ? "ON" : "OFF");
+            }
 
             JSONObject jsonResponse = processRequest(jsonRequest);
 
-            dbResult = new SyncLiteDBResult();
-            dbResult.result = jsonResponse.getBoolean("result");
-            dbResult.message = jsonResponse.getString("message");
-            if (jsonResponse.has("resultset")) {
-                dbResult.resultSet = jsonResponse.getJSONArray("resultset");
-            }
+            dbResult = toDBResult(jsonResponse);
         } catch (Exception e) {
             throw new SQLException("Failed to execute sql on DB : " + dbPath + " : " + e.getMessage(), e);
+        }
+        return dbResult;
+    }
+
+    public static SyncLiteDBResult next(String resultsetHandle, int resultsetPaginationSize,
+            String dataFormat, Boolean includeMetadata) throws SQLException {
+        SyncLiteDBResult dbResult;
+        try {
+            JSONObject jsonRequest = new JSONObject();
+            jsonRequest.put("request-type", "next");
+            jsonRequest.put("resultset-handle", resultsetHandle);
+            if (resultsetPaginationSize > 0) {
+                jsonRequest.put("resultset-pagination-size", resultsetPaginationSize);
+            }
+            if (dataFormat != null) {
+                jsonRequest.put("resultset-data-format", dataFormat);
+            }
+            if (includeMetadata != null) {
+                jsonRequest.put("resultset-include-metadata", includeMetadata ? "ON" : "OFF");
+            }
+
+            JSONObject jsonResponse = processRequest(jsonRequest);
+            dbResult = toDBResult(jsonResponse);
+        } catch (Exception e) {
+            throw new SQLException("Failed to fetch next page for resultset-handle : " + resultsetHandle + " : " + e.getMessage(), e);
+        }
+        return dbResult;
+    }
+
+    private static SyncLiteDBResult toDBResult(JSONObject jsonResponse) {
+        SyncLiteDBResult dbResult = new SyncLiteDBResult();
+        dbResult.result = jsonResponse.getBoolean("result");
+        dbResult.message = jsonResponse.getString("message");
+        if (jsonResponse.has("resultset")) {
+            dbResult.resultSet = jsonResponse.getJSONArray("resultset");
+        }
+        if (jsonResponse.has("txn-handle")) {
+            dbResult.txnHandle = jsonResponse.getString("txn-handle");
+        }
+        if (jsonResponse.has("resultset-handle")) {
+            dbResult.resultsetHandle = jsonResponse.getString("resultset-handle");
+        }
+        if (jsonResponse.has("has-more")) {
+            dbResult.hasMore = jsonResponse.getBoolean("has-more");
+        }
+        if (jsonResponse.has("resultset-metadata")) {
+            dbResult.columnMetadata = jsonResponse.getJSONArray("resultset-metadata");
         }
         return dbResult;
     }
