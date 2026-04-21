@@ -89,6 +89,7 @@ struct SyncLiteDBResult {
     txn_handle: Option<String>,
     resultset_handle: Option<String>,
     has_more: Option<bool>,
+    column_metadata: Option<Value>,
 }
 
 const SYNC_LITE_DB_ADDRESS: &str = "http://localhost:5555";
@@ -165,6 +166,7 @@ fn to_db_result(json_response: &Value) -> SyncLiteDBResult {
         txn_handle: json_response.get("txn-handle").and_then(Value::as_str).map(|s| s.to_string()),
         resultset_handle: json_response.get("resultset-handle").and_then(Value::as_str).map(|s| s.to_string()),
         has_more: json_response.get("has-more").and_then(Value::as_bool),
+        column_metadata: json_response.get("resultset-metadata").cloned(),
     }
 }
 
@@ -216,7 +218,7 @@ fn rollback_transaction(db_path: &Path, txn_handle: &str) -> Result<SyncLiteDBRe
     Ok(to_db_result(&json_response))
 }
 
-fn execute_sql(db_path: &Path, txn_handle: Option<&str>, sql: &str, arguments: Option<&Value>) -> Result<SyncLiteDBResult, String> {
+fn execute_sql(db_path: &Path, txn_handle: Option<&str>, sql: &str, arguments: Option<&Value>, data_format: Option<&str>, include_metadata: Option<bool>) -> Result<SyncLiteDBResult, String> {
     let mut json_request = json!({
         "db-path": db_path.to_str().unwrap(),
         "sql": sql,
@@ -228,13 +230,19 @@ fn execute_sql(db_path: &Path, txn_handle: Option<&str>, sql: &str, arguments: O
     if let Some(args) = arguments {
         json_request["arguments"] = args.clone();
     }
+    if let Some(fmt) = data_format {
+        json_request["resultset-data-format"] = json!(fmt);
+    }
+    if let Some(meta) = include_metadata {
+        json_request["resultset-include-metadata"] = json!(if meta { "ON" } else { "OFF" });
+    }
 
     let json_response = process_request(&json_request)?;
 
     Ok(to_db_result(&json_response))
 }
 
-fn next_page(resultset_handle: &str, resultset_pagination_size: Option<u64>) -> Result<SyncLiteDBResult, String> {
+fn next_page(resultset_handle: &str, resultset_pagination_size: Option<u64>, data_format: Option<&str>, include_metadata: Option<bool>) -> Result<SyncLiteDBResult, String> {
     let mut json_request = json!({
         "request-type": "next",
         "resultset-handle": resultset_handle,
@@ -244,6 +252,12 @@ fn next_page(resultset_handle: &str, resultset_pagination_size: Option<u64>) -> 
         if size > 0 {
             json_request["resultset-pagination-size"] = json!(size);
         }
+    }
+    if let Some(fmt) = data_format {
+        json_request["resultset-data-format"] = json!(fmt);
+    }
+    if let Some(meta) = include_metadata {
+        json_request["resultset-include-metadata"] = json!(if meta { "ON" } else { "OFF" });
     }
 
     let json_response = process_request(&json_request)?;
@@ -306,7 +320,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("========================================================");
     println!("Executing create table");
     println!("========================================================");
-    let r = execute_sql(&db_path, Some(txn_handle), "create table if not exists t1(a int, b text)", None).map_err(|e| format!("Error: {}", e))?;
+    let r = execute_sql(&db_path, Some(txn_handle), "create table if not exists t1(a int, b text)", None, None, None).map_err(|e| format!("Error: {}", e))?;
     println!("result : {}", r.result);
     println!("message : {}", r.message);
     if !r.result {
@@ -323,7 +337,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         [2, "two"],
     ]);
 
-    let r = execute_sql(&db_path, Some(txn_handle), "insert into t1 (a, b) values(?, ?)", Some(&arguments)).map_err(|e| format!("Error: {}", e))?;
+    let r = execute_sql(&db_path, Some(txn_handle), "insert into t1 (a, b) values(?, ?)", Some(&arguments), None, None).map_err(|e| format!("Error: {}", e))?;
     println!("result : {}", r.result);
     println!("message : {}", r.message);
     if !r.result {
@@ -343,15 +357,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     println!("========================================================");
 
-    // Select from table
+    // Select from table (JSON format - default, records as {colName: colValue} objects)
     println!("========================================================");
-    println!("Executing select from table");
+    println!("Executing select from table (JSON format)");
     println!("========================================================");
-    let r = execute_sql(&db_path, None, "select a, b from t1", None).map_err(|e| format!("Error: {}", e))?;
+    let r = execute_sql(&db_path, None, "select a, b from t1", None, None, None).map_err(|e| format!("Error: {}", e))?;
     println!("result : {}", r.result);
     println!("message : {}", r.message);
 
-    println!("Selected Records:");
+    if let Some(meta) = &r.column_metadata {
+        if let Some(cols) = meta.as_array() {
+            let headers: Vec<&str> = cols.iter().filter_map(|c| c["label"].as_str()).collect();
+            println!("{}", headers.join("\t"));
+        }
+    }
     let mut current = r;
     loop {
         if let Some(result_set) = &current.result_set {
@@ -371,18 +390,60 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         let next_handle = handle.unwrap();
-        current = next_page(&next_handle, None).map_err(|e| format!("Error: {}", e))?;
+        current = next_page(&next_handle, None, None, None).map_err(|e| format!("Error: {}", e))?;
         if !current.result {
             return Err(format!("Next page call failed: {}", current.message).into());
         }
     }
     println!("========================================================");
 
+    // Select from table (DB format - records as value arrays, column order matches column_metadata)
+    println!("========================================================");
+    println!("Executing select from table (DB format)");
+    println!("========================================================");
+    let r = execute_sql(&db_path, None, "select a, b from t1", None, Some("DB"), Some(true)).map_err(|e| format!("Error: {}", e))?;
+    println!("result : {}", r.result);
+    println!("message : {}", r.message);
+
+    if let Some(meta) = &r.column_metadata {
+        if let Some(cols) = meta.as_array() {
+            let headers: Vec<&str> = cols.iter().filter_map(|c| c["label"].as_str()).collect();
+            println!("{}", headers.join("\t"));
+        }
+    }
+    let mut current = r;
+    loop {
+        if let Some(result_set) = &current.result_set {
+            if let Some(array) = result_set.as_array() {
+                for row in array {
+                    if let Some(values) = row.as_array() {
+                        let vals: Vec<String> = values.iter().map(|v| {
+                            if v.is_null() { "null".to_string() } else { v.to_string() }
+                        }).collect();
+                        println!("{}", vals.join("\t"));
+                    }
+                }
+            }
+        }
+
+        let has_more = current.has_more.unwrap_or(false);
+        let handle = current.resultset_handle.clone();
+        if !has_more || handle.is_none() {
+            break;
+        }
+
+        let next_handle = handle.unwrap();
+        current = next_page(&next_handle, None, Some("DB"), None).map_err(|e| format!("Error: {}", e))?;
+        if !current.result {
+            return Err(format!("Next page call failed: {}", current.message).into());
+        }
+    }
+
     // Drop table
     println!("========================================================");
     println!("Executing drop table");
     println!("========================================================");
-    let r = execute_sql(&db_path, None, "drop table t1", None).map_err(|e| format!("Error: {}", e))?;
+    let r = execute_sql(&db_path, None, "drop table t1", None, None, None).map_err(|e| format!("Error: {}", e))?;
     println!("result : {}", r.result);
     println!("message : {}", r.message);
 

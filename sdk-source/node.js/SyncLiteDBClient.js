@@ -89,6 +89,7 @@ class SyncLiteDBResult {
     this.txnHandle = '';
     this.resultsetHandle = '';
     this.hasMore = false;
+    this.columnMetadata = null;
   }
 }
 
@@ -100,6 +101,7 @@ function toDBResult(jsonResponse) {
   dbResult.txnHandle = jsonResponse['txn-handle'] || '';
   dbResult.resultsetHandle = jsonResponse['resultset-handle'] || '';
   dbResult.hasMore = Boolean(jsonResponse['has-more']);
+  dbResult.columnMetadata = jsonResponse['resultset-metadata'] || null;
   return dbResult;
 }
 
@@ -216,7 +218,7 @@ async function rollbackTransaction(dbPath, txnHandle) {
   }
 }
 
-async function executeSQL(dbPath, txnHandle, sql, arguments = null) {
+async function executeSQL(dbPath, txnHandle, sql, args = null, dataFormat = null, includeMetadata = null) {
   try {
     const jsonRequest = {
       'db-path': dbPath,
@@ -227,8 +229,16 @@ async function executeSQL(dbPath, txnHandle, sql, arguments = null) {
       jsonRequest['txn-handle'] = txnHandle;
     }
 
-    if (arguments) {
-      jsonRequest['arguments'] = arguments;
+    if (args) {
+      jsonRequest['arguments'] = args;
+    }
+
+    if (dataFormat !== null) {
+      jsonRequest['resultset-data-format'] = dataFormat;
+    }
+
+    if (includeMetadata !== null) {
+      jsonRequest['resultset-include-metadata'] = includeMetadata ? 'ON' : 'OFF';
     }
 
     const jsonResponse = await processRequest(jsonRequest);
@@ -238,7 +248,7 @@ async function executeSQL(dbPath, txnHandle, sql, arguments = null) {
   }
 }
 
-async function next(resultsetHandle, resultsetPaginationSize = null) {
+async function next(resultsetHandle, resultsetPaginationSize = null, dataFormat = null, includeMetadata = null) {
   try {
     const jsonRequest = {
       'request-type': 'next',
@@ -247,6 +257,14 @@ async function next(resultsetHandle, resultsetPaginationSize = null) {
 
     if (resultsetPaginationSize && resultsetPaginationSize > 0) {
       jsonRequest['resultset-pagination-size'] = resultsetPaginationSize;
+    }
+
+    if (dataFormat !== null) {
+      jsonRequest['resultset-data-format'] = dataFormat;
+    }
+
+    if (includeMetadata !== null) {
+      jsonRequest['resultset-include-metadata'] = includeMetadata ? 'ON' : 'OFF';
     }
 
     const jsonResponse = await processRequest(jsonRequest);
@@ -318,11 +336,11 @@ async function createDBDirs() {
     console.log('========================================================');
     console.log('Executing insert into table');
     console.log('========================================================');
-    const arguments = [
+    const insertArgs = [
       [1, 'one'],
       [2, 'two'],
     ];
-    r = await executeSQL(dbPath, txnHandle, 'INSERT INTO t1 (a, b) VALUES (?, ?)', arguments);
+    r = await executeSQL(dbPath, txnHandle, 'INSERT INTO t1 (a, b) VALUES (?, ?)', insertArgs);
     console.log('result :', r.result);
     console.log('message :', r.message);
     if (!r.result) process.exit(1);
@@ -336,14 +354,16 @@ async function createDBDirs() {
     console.log('message :', r.message);
     if (!r.result) process.exit(1);
 
-    // Select Data
+    // Select Data (JSON format - default, records as {colName: colValue} objects)
     console.log('========================================================');
-    console.log('Executing select from table');
+    console.log('Executing select from table (JSON format)');
     console.log('========================================================');
     r = await executeSQL(dbPath, null, 'SELECT a, b FROM t1');
     console.log('result :', r.result);
     console.log('message :', r.message);
-    console.log('Selected Records:');
+    if (r.columnMetadata) {
+      console.log(r.columnMetadata.map(c => c.label).join('\t'));
+    }
     let current = r;
     while (true) {
       current.resultSet.forEach((record) => {
@@ -353,6 +373,30 @@ async function createDBDirs() {
         break;
       }
       current = await next(current.resultsetHandle);
+      if (!current.result) {
+        throw new Error(`Next page call failed: ${current.message}`);
+      }
+    }
+
+    // Select Data (DB format - records as value arrays, column order matches metadata)
+    console.log('========================================================');
+    console.log('Executing select from table (DB format)');
+    console.log('========================================================');
+    r = await executeSQL(dbPath, null, 'SELECT a, b FROM t1', null, 'DB', true);
+    console.log('result :', r.result);
+    console.log('message :', r.message);
+    if (r.columnMetadata) {
+      console.log(r.columnMetadata.map(c => c.label).join('\t'));
+    }
+    current = r;
+    while (true) {
+      current.resultSet.forEach((row) => {
+        console.log(row.map(v => (v === null ? 'null' : v)).join('\t'));
+      });
+      if (!current.hasMore || !current.resultsetHandle) {
+        break;
+      }
+      current = await next(current.resultsetHandle, null, 'DB');
       if (!current.result) {
         throw new Error(`Next page call failed: ${current.message}`);
       }

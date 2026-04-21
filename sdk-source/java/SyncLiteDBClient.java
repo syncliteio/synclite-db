@@ -108,30 +108,27 @@ public class SyncLiteDBClient {
 		public String txnHandle;
 		public String resultsetHandle;
 		public Boolean hasMore;
-	}
+                public JSONArray columnMetadata;
+        }
 
-	private static SyncLiteDBResult toResult(JSONObject jsonResponse) {
-		SyncLiteDBResult dbResult = new SyncLiteDBResult();
-		dbResult.result = jsonResponse.optBoolean("result");
-		dbResult.message = jsonResponse.optString("message");
-		if (jsonResponse.has("resultset")) {
-			dbResult.resultSet = jsonResponse.getJSONArray("resultset");
-		}
-		if (jsonResponse.has("txn-handle")) {
-			dbResult.txnHandle = jsonResponse.optString("txn-handle", null);
-		}
-		if (jsonResponse.has("resultset-handle")) {
-			dbResult.resultsetHandle = jsonResponse.optString("resultset-handle", null);
-		}
-		if (jsonResponse.has("has-more")) {
-			dbResult.hasMore = Boolean.valueOf(jsonResponse.optBoolean("has-more"));
-		}
-		return dbResult;
-	}
-
-	private static String syncLiteDBAddress = "http://localhost:5555";
-	private static Path dbDir;
-
+        private static SyncLiteDBResult toResult(JSONObject jsonResponse) {
+                SyncLiteDBResult dbResult = new SyncLiteDBResult();
+                dbResult.result = jsonResponse.optBoolean("result");
+                dbResult.message = jsonResponse.optString("message");
+                if (jsonResponse.has("resultset")) {
+                        dbResult.resultSet = jsonResponse.getJSONArray("resultset");
+                }
+                if (jsonResponse.has("txn-handle")) {
+                        dbResult.txnHandle = jsonResponse.optString("txn-handle", null);
+                }
+                if (jsonResponse.has("resultset-handle")) {
+                        dbResult.resultsetHandle = jsonResponse.optString("resultset-handle", null);
+                }
+                if (jsonResponse.has("has-more")) {
+                        dbResult.hasMore = Boolean.valueOf(jsonResponse.optBoolean("has-more"));
+                }
+                if (jsonResponse.has("resultset-metadata")) {
+                        dbResult.columnMetadata = jsonResponse.getJSONArray("resultset-metadata");
 	private static String sha256Hex(String value) throws Exception {
 		MessageDigest digest = MessageDigest.getInstance("SHA-256");
 		byte[] hash = digest.digest(value.getBytes(StandardCharsets.UTF_8));
@@ -301,17 +298,26 @@ public class SyncLiteDBClient {
 	}
 
 	public static SyncLiteDBResult executeSQL(Path dbPath, String txnHandle, String sql, JSONArray arguments) throws SQLException {
-		SyncLiteDBResult dbResult;
-		try {
-			JSONObject jsonRequest = new JSONObject();
-			jsonRequest.put("db-path", dbPath);			
-			jsonRequest.put("sql", sql);
-			if (txnHandle != null) {
-				jsonRequest.put("txn-handle", txnHandle);
-			}
-			if (arguments != null) {
-				jsonRequest.put("arguments", arguments);
-			}
+                return executeSQL(dbPath, txnHandle, sql, arguments, null, null);
+        }
+
+        public static SyncLiteDBResult executeSQL(Path dbPath, String txnHandle, String sql, JSONArray arguments, String dataFormat, Boolean includeMetadata) throws SQLException {
+                SyncLiteDBResult dbResult;
+                try {
+                        JSONObject jsonRequest = new JSONObject();
+                        jsonRequest.put("db-path", dbPath);
+                        jsonRequest.put("sql", sql);
+                        if (txnHandle != null) {
+                                jsonRequest.put("txn-handle", txnHandle);
+                        }
+                        if (arguments != null) {
+                                jsonRequest.put("arguments", arguments);
+                        }
+                        if (dataFormat != null) {
+                                jsonRequest.put("resultset-data-format", dataFormat);
+                        }
+                        if (includeMetadata != null) {
+                                jsonRequest.put("resultset-include-metadata", includeMetadata ? "ON" : "OFF");
 
 			JSONObject jsonRespose = processRequest(jsonRequest);
 
@@ -323,13 +329,22 @@ public class SyncLiteDBClient {
 	}
 
 	public static SyncLiteDBResult next(String resultsetHandle, Integer resultsetPaginationSize) throws SQLException {
-		try {
-			JSONObject jsonRequest = new JSONObject();
-			jsonRequest.put("request-type", "next");
-			jsonRequest.put("resultset-handle", resultsetHandle);
-			if (resultsetPaginationSize != null && resultsetPaginationSize.intValue() > 0) {
-				jsonRequest.put("resultset-pagination-size", resultsetPaginationSize.intValue());
-			}
+                return next(resultsetHandle, resultsetPaginationSize, null, null);
+        }
+
+        public static SyncLiteDBResult next(String resultsetHandle, Integer resultsetPaginationSize, String dataFormat, Boolean includeMetadata) throws SQLException {
+                try {
+                        JSONObject jsonRequest = new JSONObject();
+                        jsonRequest.put("request-type", "next");
+                        jsonRequest.put("resultset-handle", resultsetHandle);
+                        if (resultsetPaginationSize != null && resultsetPaginationSize.intValue() > 0) {
+                                jsonRequest.put("resultset-pagination-size", resultsetPaginationSize.intValue());
+                        }
+                        if (dataFormat != null) {
+                                jsonRequest.put("resultset-data-format", dataFormat);
+                        }
+                        if (includeMetadata != null) {
+                                jsonRequest.put("resultset-include-metadata", includeMetadata ? "ON" : "OFF");
 
 			JSONObject jsonRespose = processRequest(jsonRequest);
 			return toResult(jsonRespose);
@@ -438,27 +453,75 @@ public class SyncLiteDBClient {
 		}
 		System.out.println("========================================================");
 
-		//Select from table
-		System.out.println("========================================================");
-		System.out.println("Excecuting select from table"); 
-		System.out.println("========================================================");
-		r = executeSQL(dbPath, null, "select a, b from t1", null);
-		System.out.println("result : " + r.result);
-		System.out.println("message : " + r.message);
+//Select from table (JSON format - default, records as {colName: colValue} objects)
+                System.out.println("========================================================");
+                System.out.println("Excecuting select from table (JSON format)"); 
+                System.out.println("========================================================");
+                r = executeSQL(dbPath, null, "select a, b from t1", null);
+                System.out.println("result : " + r.result);
+                System.out.println("message : " + r.message);
 
-		System.out.println("Selected Records : ");
-		SyncLiteDBResult current = r;
-		while (true) {
-			if (current.resultSet != null) {
-				for (int i = 0; i < current.resultSet.length(); ++i) {
-					JSONObject rec = current.resultSet.getJSONObject(i);
-					System.out.println("a = " + rec.get("a") + ", b = " + rec.get("b"));
-				}
-			}
-			if (!Boolean.TRUE.equals(current.hasMore) || current.resultsetHandle == null || current.resultsetHandle.isBlank()) {
-				break;
-			}
-			current = next(current.resultsetHandle, null);
+                // Print column headers from metadata
+                if (r.columnMetadata != null) {
+                        StringBuilder header = new StringBuilder();
+                        for (int i = 0; i < r.columnMetadata.length(); i++) {
+                                if (i > 0) header.append("\t");
+                                header.append(r.columnMetadata.getJSONObject(i).getString("label"));
+                        }
+                        System.out.println(header);
+                }
+                SyncLiteDBResult current = r;
+                while (true) {
+                        if (current.resultSet != null) {
+                                for (int i = 0; i < current.resultSet.length(); ++i) {
+                                        JSONObject rec = current.resultSet.getJSONObject(i);
+                                        System.out.println("a = " + rec.get("a") + ", b = " + rec.get("b"));
+                                }
+                        }
+                        if (!Boolean.TRUE.equals(current.hasMore) || current.resultsetHandle == null || current.resultsetHandle.isBlank()) {
+                                break;
+                        }
+                        current = next(current.resultsetHandle, null);
+                        if (!current.result) {
+                                throw new SQLException("Failed to fetch next page: " + current.message);
+                        }
+                }
+                System.out.println("========================================================");
+
+                //Select from table (DB format - records as value arrays, column order matches metadata)
+                System.out.println("========================================================");
+                System.out.println("Excecuting select from table (DB format)"); 
+                System.out.println("========================================================");
+                r = executeSQL(dbPath, null, "select a, b from t1", null, "DB", true);
+                System.out.println("result : " + r.result);
+                System.out.println("message : " + r.message);
+
+                // Print column headers from metadata
+                if (r.columnMetadata != null) {
+                        StringBuilder header = new StringBuilder();
+                        for (int i = 0; i < r.columnMetadata.length(); i++) {
+                                if (i > 0) header.append("\t");
+                                header.append(r.columnMetadata.getJSONObject(i).getString("label"));
+                        }
+                        System.out.println(header);
+                }
+                current = r;
+                while (true) {
+                        if (current.resultSet != null) {
+                                for (int i = 0; i < current.resultSet.length(); ++i) {
+                                        JSONArray row = current.resultSet.getJSONArray(i);
+                                        StringBuilder sb = new StringBuilder();
+                                        for (int j = 0; j < row.length(); j++) {
+                                                if (j > 0) sb.append("\t");
+                                                sb.append(row.isNull(j) ? "null" : row.get(j));
+                                        }
+                                        System.out.println(sb);
+                                }
+                        }
+                        if (!Boolean.TRUE.equals(current.hasMore) || current.resultsetHandle == null || current.resultsetHandle.isBlank()) {
+                                break;
+                        }
+                        current = next(current.resultsetHandle, null, "DB", null);
 			if (!current.result) {
 				throw new SQLException("Failed to fetch next page: " + current.message);
 			}

@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Text;
 using System.Security.Cryptography;
@@ -88,6 +89,7 @@ namespace SyncLite
         public string TxnHandle { get; set; }
         public string ResultsetHandle { get; set; }
         public bool? HasMore { get; set; }
+        public JArray ColumnMetadata { get; set; }
     }
 
     public class SyncLiteDBClient
@@ -104,7 +106,8 @@ namespace SyncLite
                 ResultSet = jsonResponse["resultset"] as JArray,
                 TxnHandle = jsonResponse["txn-handle"]?.ToString(),
                 ResultsetHandle = jsonResponse["resultset-handle"]?.ToString(),
-                HasMore = jsonResponse["has-more"]?.ToObject<bool>()
+                HasMore = jsonResponse["has-more"]?.ToObject<bool>(),
+                ColumnMetadata = jsonResponse["resultset-metadata"] as JArray
             };
         }
 
@@ -296,7 +299,7 @@ namespace SyncLite
         }
 
 
-        public static SyncLiteDBResult ExecuteSQL(string dbPath, string txnHandle, string sql, JArray arguments = null)
+        public static SyncLiteDBResult ExecuteSQL(string dbPath, string txnHandle, string sql, JArray arguments = null, string dataFormat = null, bool? includeMetadata = null)
         {
             try
             {
@@ -316,6 +319,16 @@ namespace SyncLite
                     jsonRequest["arguments"] = arguments;
                 }
 
+                if (dataFormat != null)
+                {
+                    jsonRequest["resultset-data-format"] = dataFormat;
+                }
+
+                if (includeMetadata.HasValue)
+                {
+                    jsonRequest["resultset-include-metadata"] = includeMetadata.Value ? "ON" : "OFF";
+                }
+
                 JObject jsonResponse = ProcessRequest(jsonRequest);
 
                 return ToDBResult(jsonResponse);
@@ -326,7 +339,7 @@ namespace SyncLite
             }
         }
 
-        public static SyncLiteDBResult Next(string resultsetHandle, int? resultsetPaginationSize = null)
+        public static SyncLiteDBResult Next(string resultsetHandle, int? resultsetPaginationSize = null, string dataFormat = null, bool? includeMetadata = null)
         {
             try
             {
@@ -339,6 +352,16 @@ namespace SyncLite
                 if (resultsetPaginationSize.HasValue && resultsetPaginationSize.Value > 0)
                 {
                     jsonRequest["resultset-pagination-size"] = resultsetPaginationSize.Value;
+                }
+
+                if (dataFormat != null)
+                {
+                    jsonRequest["resultset-data-format"] = dataFormat;
+                }
+
+                if (includeMetadata.HasValue)
+                {
+                    jsonRequest["resultset-include-metadata"] = includeMetadata.Value ? "ON" : "OFF";
                 }
 
                 JObject jsonResponse = ProcessRequest(jsonRequest);
@@ -449,15 +472,18 @@ namespace SyncLite
                 Environment.Exit(1);
             }
 
-            // Select from table
+            // Select from table (JSON format - default, records as {colName: colValue} objects)
             Console.WriteLine("========================================================");
-            Console.WriteLine("Executing select from table");
+            Console.WriteLine("Executing select from table (JSON format)");
             Console.WriteLine("========================================================");
             r = ExecuteSQL(dbPath, null, "select a, b from t1");
             Console.WriteLine("Result: " + r.Result);
             Console.WriteLine("Message: " + r.Message);
 
-            Console.WriteLine("Selected Records: ");
+            if (r.ColumnMetadata != null)
+            {
+                Console.WriteLine(string.Join("\t", r.ColumnMetadata.Select(c => c["label"]?.ToString())));
+            }
             SyncLiteDBResult current = r;
             while (true)
             {
@@ -475,6 +501,45 @@ namespace SyncLite
                 }
 
                 current = Next(current.ResultsetHandle);
+                if (!current.Result)
+                {
+                    throw new Exception("Next page call failed: " + current.Message);
+                }
+            }
+
+            // Select from table (DB format - records as value arrays, column order matches ColumnMetadata)
+            Console.WriteLine("========================================================");
+            Console.WriteLine("Executing select from table (DB format)");
+            Console.WriteLine("========================================================");
+            r = ExecuteSQL(dbPath, null, "select a, b from t1", null, "DB", true);
+            Console.WriteLine("Result: " + r.Result);
+            Console.WriteLine("Message: " + r.Message);
+
+            if (r.ColumnMetadata != null)
+            {
+                Console.WriteLine(string.Join("\t", r.ColumnMetadata.Select(c => c["label"]?.ToString())));
+            }
+            current = r;
+            while (true)
+            {
+                if (current.ResultSet != null)
+                {
+                    foreach (var row in current.ResultSet)
+                    {
+                        var rowArr = row as JArray;
+                        if (rowArr != null)
+                        {
+                            Console.WriteLine(string.Join("\t", rowArr.Select(v => v.Type == JTokenType.Null ? "null" : v.ToString())));
+                        }
+                    }
+                }
+
+                if (current.HasMore != true || string.IsNullOrEmpty(current.ResultsetHandle))
+                {
+                    break;
+                }
+
+                current = Next(current.ResultsetHandle, null, "DB");
                 if (!current.Result)
                 {
                     throw new Exception("Next page call failed: " + current.Message);

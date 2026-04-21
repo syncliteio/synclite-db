@@ -123,6 +123,10 @@ public class Main {
 	}
 
 	static String createJsonResponseWithHandle(Boolean result, String message, Object resultSet, String code, String protocolVersion, UUID resultsetHandle, Boolean hasMore) {
+		return createJsonResponseWithHandle(result, message, resultSet, code, protocolVersion, resultsetHandle, hasMore, null);
+	}
+
+	static String createJsonResponseWithHandle(Boolean result, String message, Object resultSet, String code, String protocolVersion, UUID resultsetHandle, Boolean hasMore, JSONArray columnMetadata) {
 		JSONObject jsonResponse = new JSONObject();
 		try {
 			jsonResponse.put("result", result);
@@ -137,6 +141,9 @@ public class Main {
 			}
 			if (hasMore != null) {
 				jsonResponse.put("has-more", hasMore.booleanValue());
+			}
+			if (columnMetadata != null) {
+				jsonResponse.put("resultset-metadata", columnMetadata);
 			}
 		} catch (JSONException e) {
 			jsonResponse = new JSONObject();
