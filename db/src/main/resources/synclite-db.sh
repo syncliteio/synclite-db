@@ -8,4 +8,4 @@ else
   JAVA_CMD="java"
 fi
 
-"$JAVA_CMD" -classpath "$SCRIPT_DIR/synclite-db-${revision}:$SCRIPT_DIR/*" com.synclite.db.Main $1 $2
+"$JAVA_CMD" -classpath "$SCRIPT_DIR/synclite-db-${revision}:$SCRIPT_DIR/*" com.synclite.db.Main "$@"
