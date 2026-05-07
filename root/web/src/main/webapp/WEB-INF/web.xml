@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<web-app xmlns="http://java.sun.com/xml/ns/javaee"
+   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+   xsi:schemaLocation="http://java.sun.com/xml/ns/javaee http://java.sun.com/xml/ns/javaee/web-app_3_0.xsd"
+   version="3.0">
+
+    <display-name>SyncLite DB Dashboard</display-name>
+    <welcome-file-list>
+        <welcome-file>configureServer.jsp</welcome-file>
+    </welcome-file-list>
+
+    <session-config>
+        <cookie-config>
+            <secure>false</secure>
+            <http-only>true</http-only>
+        </cookie-config>
+        <tracking-mode>COOKIE</tracking-mode>
+    </session-config>
+
+    <!-- Filter to generate CSRF token for all requests -->
+    <filter>
+        <filter-name>CSRFTokenFilter</filter-name>
+        <filter-class>com.synclite.db.web.CSRFTokenFilter</filter-class>
+    </filter>
+
+    <filter-mapping>
+        <filter-name>CSRFTokenFilter</filter-name>
+        <url-pattern>/*</url-pattern>
+    </filter-mapping>
+
+    <!-- Dashboard servlet -->
+    <servlet>
+        <servlet-name>Dashboard</servlet-name>
+        <servlet-class>com.synclite.db.web.DashboardServlet</servlet-class>
+        <load-on-startup>1</load-on-startup>
+    </servlet>
+    <servlet-mapping>
+        <servlet-name>Dashboard</servlet-name>
+        <url-pattern>/api/dashboard</url-pattern>
+    </servlet-mapping>
+
+    <!-- Database statistics servlet -->
+    <servlet>
+        <servlet-name>DatabaseStatistics</servlet-name>
+        <servlet-class>com.synclite.db.web.DatabaseStatisticsServlet</servlet-class>
+        <load-on-startup>2</load-on-startup>
+    </servlet>
+    <servlet-mapping>
+        <servlet-name>DatabaseStatistics</servlet-name>
+        <url-pattern>/api/databases</url-pattern>
+    </servlet-mapping>
+    <servlet-mapping>
+        <servlet-name>DatabaseStatistics</servlet-name>
+        <url-pattern>/api/database-statistics</url-pattern>
+    </servlet-mapping>
+
+    <servlet>
+        <servlet-name>Devices</servlet-name>
+        <servlet-class>com.synclite.db.web.DevicesServlet</servlet-class>
+        <load-on-startup>3</load-on-startup>
+    </servlet>
+    <servlet-mapping>
+        <servlet-name>Devices</servlet-name>
+        <url-pattern>/api/devices</url-pattern>
+    </servlet-mapping>
+
+    <servlet>
+        <servlet-name>DeviceStats</servlet-name>
+        <servlet-class>com.synclite.db.web.DeviceStatsServlet</servlet-class>
+        <load-on-startup>4</load-on-startup>
+    </servlet>
+    <servlet-mapping>
+        <servlet-name>DeviceStats</servlet-name>
+        <url-pattern>/api/device-stats</url-pattern>
+    </servlet-mapping>
+
+    <!-- Server config servlet -->
+    <servlet>
+        <servlet-name>ServerConfig</servlet-name>
+        <servlet-class>com.synclite.db.web.ServerConfigServlet</servlet-class>
+        <load-on-startup>5</load-on-startup>
+    </servlet>
+    <servlet-mapping>
+        <servlet-name>ServerConfig</servlet-name>
+        <url-pattern>/api/config</url-pattern>
+    </servlet-mapping>
+
+    <servlet>
+        <servlet-name>ConnectExecute</servlet-name>
+        <servlet-class>com.synclite.db.web.ConnectExecuteServlet</servlet-class>
+        <load-on-startup>6</load-on-startup>
+    </servlet>
+    <servlet-mapping>
+        <servlet-name>ConnectExecute</servlet-name>
+        <url-pattern>/api/connect/execute</url-pattern>
+    </servlet-mapping>
+
+    <!-- Note: Additional servlets (StartServer, StopServer, ValidateJobConfiguration, SaveJobConfiguration) 
+         are mapped via @WebServlet annotations in their respective Java classes -->
+    <!-- Mapping: StartServer -> /startServer -->
+    <!-- Mapping: StopServer -> /stopServer -->
+    <!-- Mapping: ValidateJobConfiguration -> /validateJobConfiguration -->
+    <!-- Mapping: SaveJobConfiguration -> /saveJobConfiguration -->
+
+</web-app>

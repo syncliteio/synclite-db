@@ -34,7 +34,17 @@ synclite-db.sh --config synclite_db.conf
 
 The server binds to `http://localhost:<configured-port>` by default.
 
+Database files are managed by the server under its DB root directory; applications should not pass physical DB paths in API calls.
+
 ## HTTP/JSON API
+
+### Request model (important)
+
+- Applications send `db-name` (not `db-path`).
+- SyncLite DB resolves the physical database path internally under the server DB root directory.
+- `db-name` is also used internally as SyncLite Logger `device-name`.
+- On `initialize`, pass logger settings as a nested JSON object in `synclite-logger-options` (or `synclite-logger-config` object alias).
+- File-path based logger config in requests is deprecated.
 
 ### Initialize a database
 
@@ -42,17 +52,22 @@ The server binds to `http://localhost:<configured-port>` by default.
 POST /synclite
 {
   "db-type": "SQLITE",
-  "db-path": "/home/alice/synclite/job1/myapp.db",
-  "synclite-logger-config": "/home/alice/synclite/job1/synclite_logger.conf",
+  "db-name": "myapp",
+  "synclite-logger-options": {
+    "local-data-stage-directory": "/home/alice/synclite/job1/stageDir",
+    "destination-type": "FS"
+  },
   "sql": "initialize"
 }
 ```
+
+If `synclite-logger-options` is omitted, server default logger config is used.
 
 ### Create a table
 
 ```json
 {
-  "db-path": "/home/alice/synclite/job1/myapp.db",
+  "db-name": "myapp",
   "sql": "CREATE TABLE IF NOT EXISTS events(id INT, payload TEXT)"
 }
 ```
@@ -61,7 +76,7 @@ POST /synclite
 
 ```json
 {
-  "db-path": "/home/alice/synclite/job1/myapp.db",
+  "db-name": "myapp",
   "sql": "INSERT INTO events VALUES(?, ?)",
   "arguments": [[1, "edge-event-1"], [2, "edge-event-2"]]
 }
@@ -71,13 +86,13 @@ POST /synclite
 
 ```json
 // Begin
-{ "db-path": "...", "sql": "begin" }
+{ "db-name": "myapp", "sql": "begin" }
 
 // Execute inside transaction
-{ "db-path": "...", "sql": "INSERT INTO events VALUES(?, ?)", "txn-handle": "<uuid>", "arguments": [[3, "three"]] }
+{ "db-name": "myapp", "sql": "INSERT INTO events VALUES(?, ?)", "txn-handle": "<uuid>", "arguments": [[3, "three"]] }
 
 // Commit
-{ "db-path": "...", "sql": "commit", "txn-handle": "<uuid>" }
+{ "db-name": "myapp", "sql": "commit", "txn-handle": "<uuid>" }
 ```
 
 ### Querying data — SELECT, result set handling, and pagination
@@ -87,7 +102,7 @@ POST /synclite
 ```json
 POST /synclite
 {
-  "db-path": "/home/alice/synclite/job1/myapp.db",
+  "db-name": "myapp",
   "sql": "SELECT id, name, score FROM players ORDER BY id",
   "resultset-include-metadata": "ON"
 }
@@ -124,7 +139,7 @@ Use `resultset-pagination-size` in the initial request. The server returns the f
 
 ```json
 {
-  "db-path": "/home/alice/synclite/job1/myapp.db",
+  "db-name": "myapp",
   "sql": "SELECT id, name, score FROM players ORDER BY id",
   "resultset-pagination-size": 100,
   "resultset-include-metadata": "ON"
@@ -159,7 +174,7 @@ Repeat until `has-more` is `false`. The handle is automatically released on the 
 **Full pagination loop in Python:**
 
 ```python
-r = execute_sql(db_path, None, "SELECT id, name, score FROM players ORDER BY id",
+r = execute_sql("myapp", None, "SELECT id, name, score FROM players ORDER BY id",
                 resultset_pagination_size=100, include_metadata=True)
 
 # Print header
@@ -182,7 +197,7 @@ Pass `"resultset-data-format": "DB"` (with metadata on) to receive rows as value
 
 ```json
 {
-  "db-path": "/home/alice/synclite/job1/myapp.db",
+  "db-name": "myapp",
   "sql": "SELECT id, name, score FROM players ORDER BY id",
   "resultset-data-format": "DB",
   "resultset-include-metadata": "ON"
@@ -208,7 +223,7 @@ Column order in each row array matches the order of `column-metadata`. The same 
 ### Close
 
 ```json
-{ "db-path": "...", "sql": "close" }
+{ "db-name": "myapp", "sql": "close" }
 ```
 
 ## SDK Samples
@@ -231,11 +246,11 @@ See `sdk-source/GETTING_STARTED.md` for run instructions and `sdk-source/LANGUAG
 ## Build
 
 ```bash
-cd synclite-db/db
+cd synclite-db/root/core
 mvn -Drevision=oss clean install
 ```
 
-Built artifact: `db/target/synclite-db-oss.jar`
+Built artifact: `root/core/target/synclite-db-core-oss.jar`
 
 ## Related Components
 
