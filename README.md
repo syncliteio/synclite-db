@@ -226,6 +226,96 @@ Column order in each row array matches the order of `column-metadata`. The same 
 { "db-name": "myapp", "sql": "close" }
 ```
 
+## Authentication
+
+SyncLite DB supports two independent authentication modes, configured in `synclite_db.conf`.
+
+### Mode 1 — Global Token
+
+A shared secret token. Every request carrying the correct token is accepted.
+
+**Server configuration (`synclite_db.conf`):**
+
+```properties
+auth-token = change-me-to-a-long-random-value
+```
+
+**Client — send the token as an HTTP header:**
+
+```python
+import requests
+
+headers = {"X-SyncLite-Token": "change-me-to-a-long-random-value"}
+requests.post("http://localhost:5555/synclite",
+              json={"db-name": "myapp", "sql": "SELECT 1"},
+              headers=headers)
+```
+
+Or via curl:
+
+```bash
+curl -X POST http://localhost:5555/synclite \
+  -H "Content-Type: application/json" \
+  -H "X-SyncLite-Token: change-me-to-a-long-random-value" \
+  -d '{"db-name": "myapp", "sql": "SELECT 1"}'
+```
+
+The environment variable `SYNCLITE_DB_AUTH_TOKEN` is the conventional way SDK samples pick up this token.
+
+### Mode 2 — Per-App HMAC Signed Requests
+
+Each registered application has its own `app-id` and `app-secret`. Every request is signed with HMAC-SHA256 over a canonical string that includes a timestamp, a nonce, and the SHA-256 hash of the request body. This prevents replay attacks and body tampering.
+
+**Server configuration (`synclite_db.conf`):**
+
+```properties
+enable-app-auth = true
+authorized-apps = app1,app2
+
+app.app1.secret = replace-with-long-random-secret
+app.app1.allowed-ops = initialize,begin,commit,rollback,select,next,execute,close
+
+app.app2.secret = replace-with-another-secret
+app.app2.allowed-ops = select,next,execute
+```
+
+**`allowed-ops` values:** `initialize` · `close` · `begin` · `commit` · `rollback` · `select` · `next` · `execute`
+
+**Client — sign each request:**
+
+```python
+import requests, json, hashlib, hmac, base64, time, uuid
+
+APP_ID     = "app1"
+APP_SECRET = "replace-with-long-random-secret"
+BASE_URL   = "http://localhost:5555/synclite"
+
+def signed_post(payload: dict) -> dict:
+    body      = json.dumps(payload, separators=(",", ":"))
+    timestamp = str(int(time.time() * 1000))
+    nonce     = str(uuid.uuid4())
+    body_hash = hashlib.sha256(body.encode()).hexdigest()
+    canonical = f"POST\n/\n{timestamp}\n{nonce}\n{body_hash}"
+    sig       = base64.b64encode(
+                    hmac.new(APP_SECRET.encode(), canonical.encode(),
+                             hashlib.sha256).digest()
+                ).decode()
+    headers = {
+        "Content-Type":         "application/json",
+        "X-SyncLite-App-Id":    APP_ID,
+        "X-SyncLite-Timestamp": timestamp,
+        "X-SyncLite-Nonce":     nonce,
+        "X-SyncLite-Signature": sig,
+    }
+    return requests.post(BASE_URL, data=body, headers=headers).json()
+
+signed_post({"db-name": "myapp", "sql": "SELECT 1"})
+```
+
+The environment variables `SYNCLITE_DB_APP_ID` and `SYNCLITE_DB_APP_SECRET` are the conventional way SDK samples pick up credentials.
+
+See [DOCUMENTATION.md](../DOCUMENTATION.md#73-authentication) for additional details including advanced tuning parameters (`app-auth-timestamp-skew-ms`, `app-auth-nonce-ttl-ms`, `app-auth-nonce-cache-max-entries`) and a Java signing example.
+
 ## SDK Samples
 
 Ready-to-run client samples are in `sdk-source/` covering all core API patterns:

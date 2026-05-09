@@ -99,7 +99,7 @@
             </div>
 
             <div class="button-column">
-                <button type="button" onclick="executeRequest()">Execute Query</button>
+                <button type="button" onclick="executeRequest()">Execute</button>
             </div>
 
             <div class="json-panel">

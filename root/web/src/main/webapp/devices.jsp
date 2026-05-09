@@ -1,209 +1,335 @@
 <%@ page language="java" contentType="text/html; charset=UTF-8" pageEncoding="UTF-8"%>
+<%@ page import="java.sql.*"%>
+<%@ page import="java.nio.file.Path"%>
+<%@ page import="java.nio.file.Files"%>
+<%@ page import="java.net.URLEncoder"%>
+<%@ page import="java.time.Instant"%>
+<%@ page import="java.time.LocalDateTime"%>
+<%@ page import="java.time.ZoneId"%>
+<%@ page import="java.time.format.DateTimeFormatter"%>
 <!DOCTYPE html>
 <html>
 <head>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="css/SyncLiteStyle.css">
 <title>SyncLite DB Databases</title>
-<style>
-    #databases-table thead tr {
-        background-color: #f2f2f2;
-    }
-
-    #devices-body tr:nth-child(odd) {
-        background-color: #f2f2f2;
-    }
-
-    #devices-body tr:nth-child(even) {
-        background-color: #ffffff;
-    }
-</style>
 </head>
-<body>
+
+<script type="text/javascript">
+
+    function processSort(sortColumn) {
+        if (sortColumn == document.deviceForm.sortColumn.value) {
+            if (document.deviceForm.sortOrder.value == "asc") {
+                document.deviceForm.sortOrder.value = "desc";
+            } else {
+                document.deviceForm.sortOrder.value = "asc";
+            }
+        } else {
+            document.deviceForm.sortColumn.value = sortColumn;
+            document.deviceForm.sortOrder.value = "asc";
+        }
+        document.deviceForm.submit();
+    }
+
+    function autoRefreshSetTimeout() {
+        const refreshInterval = parseInt(document.getElementById("refresh-interval").value);
+        if (!isNaN(refreshInterval)) {
+            const val = refreshInterval * 1000;
+            if (val === 0) {
+                const timeoutObj = setTimeout("autoRefresh()", 1000);
+                clearTimeout(timeoutObj);
+            } else {
+                setTimeout("autoRefresh()", val);
+            }
+        }
+    }
+
+    function autoRefresh() {
+        document.forms['deviceForm'].submit();
+    }
+
+</script>
+<body onload="autoRefreshSetTimeout()">
 <%@include file="html/menu.html"%>
 <div class="main">
     <h2>Databases</h2>
-    <h4 id="devices-error" style="color: red;"></h4>
-
-    <div class="pagination" style="margin-bottom: 10px;">
-        PAGE SIZE
-        <input type="text" id="page-size" value="10" size="2" onchange="applyPageSize()">
-        | PAGE
-        <span id="page-indicator">1</span>
-        OF
-        <span id="total-pages">0</span>
-        |
-        <a href="#" id="prev-link" onclick="goPrevPage(); return false;">Prev</a>
-        |
-        <a href="#" id="next-link" onclick="goNextPage(); return false;">Next</a>
-    </div>
-
-    <div class="container">
-        <table id="databases-table">
-            <thead>
-                <tr>
-                    <th onclick="changeSort('database_name')">Database Name</th>
-                    <th onclick="changeSort('database_path')">Database Path</th>
-                    <th onclick="changeSort('database_type')">Database Type</th>
-                    <th onclick="changeSort('request_count')">Request Count</th>
-                    <th onclick="changeSort('request_rate')">Request Rate</th>
-                    <th onclick="changeSort('open_connections')">Open Connections</th>
-                    <th onclick="changeSort('open_resultsets')">Open Result Sets</th>
-                    <th onclick="changeSort('last_heartbeat_time')">Last Heartbeat</th>
-                </tr>
-            </thead>
-            <tbody id="devices-body"></tbody>
-        </table>
-    </div>
-</div>
-
-<script>
-    const contextPath = '${pageContext.request.contextPath}';
-    let page = 1;
-    let pageSize = 10;
-    let sortBy = 'database_name';
-    let sortDir = 'ASC';
-    let totalPages = 0;
-
-    function setError(message) {
-        document.getElementById('devices-error').innerText = message || '';
-    }
-
-    function formatTimestamp(ms) {
-        if (!ms || ms <= 0) {
-            return '-';
-        }
-        return new Date(ms).toLocaleString();
-    }
-
-    function updatePager() {
-        document.getElementById('page-indicator').innerText = String(page);
-        document.getElementById('total-pages').innerText = String(totalPages);
-        const prevLink = document.getElementById('prev-link');
-        const nextLink = document.getElementById('next-link');
-
-        prevLink.className = page > 1 ? '' : 'disabled';
-        nextLink.className = page < totalPages ? '' : 'disabled';
-    }
-
-    function renderRows(rows) {
-        const body = document.getElementById('devices-body');
-        body.innerHTML = '';
-
-        if (!rows || rows.length === 0) {
-            const tr = document.createElement('tr');
-            const td = document.createElement('td');
-            td.colSpan = 8;
-            td.innerText = 'No databases found';
-            tr.appendChild(td);
-            body.appendChild(tr);
-            return;
+    <%
+        if ((session.getAttribute("job-status") == null) || (session.getAttribute("db-root") == null)
+                || session.getAttribute("db-root").toString().isBlank()) {
+            out.println("<h4 style=\"color: red;\">Please configure and start or load a SyncLite DB job to view databases.</h4>");
+            throw new javax.servlet.jsp.SkipPageException();
         }
 
-        rows.forEach((row) => {
-            const tr = document.createElement('tr');
+        Path dbRoot = Path.of(session.getAttribute("db-root").toString());
+        Path statsFilePath = dbRoot.resolve("synclite_db_metadata.db");
+        if (!Files.exists(statsFilePath)) {
+            out.println("<h4 style=\"color: red;\">Please configure and start or load a SyncLite DB job to view databases.</h4>");
+            throw new javax.servlet.jsp.SkipPageException();
+        }
 
-            const nameTd = document.createElement('td');
-            const nameLink = document.createElement('a');
-            nameLink.href = 'deviceStats.jsp?database_name=' + encodeURIComponent(row.database_name);
-            nameLink.innerText = row.database_name || '-';
-            nameTd.appendChild(nameLink);
-            tr.appendChild(nameTd);
+        int refreshInterval = 5;
+        if (request.getParameter("refresh-interval") != null) {
+            try {
+                refreshInterval = Integer.valueOf(request.getParameter("refresh-interval"));
+            } catch (Exception e) {
+                refreshInterval = 5;
+            }
+        }
 
-            const pathTd = document.createElement('td');
-            pathTd.innerText = row.database_path || '-';
-            tr.appendChild(pathTd);
-
-            const typeTd = document.createElement('td');
-            typeTd.innerText = row.database_type || '-';
-            tr.appendChild(typeTd);
-
-            const requestCountTd = document.createElement('td');
-            requestCountTd.innerText = row.request_count;
-            tr.appendChild(requestCountTd);
-
-            const requestRateTd = document.createElement('td');
-            requestRateTd.innerText = Number(row.request_rate || 0).toFixed(2) + ' req/sec';
-            tr.appendChild(requestRateTd);
-
-            const connTd = document.createElement('td');
-            connTd.innerText = row.open_connections;
-            tr.appendChild(connTd);
-
-            const rsTd = document.createElement('td');
-            rsTd.innerText = row.open_resultsets;
-            tr.appendChild(rsTd);
-
-            const hbTd = document.createElement('td');
-            hbTd.innerText = formatTimestamp(row.last_heartbeat_time);
-            tr.appendChild(hbTd);
-
-            body.appendChild(tr);
-        });
-    }
-
-    function refreshDevices() {
-        setError('');
-        const url = contextPath + '/api/devices?page=' + page + '&pageSize=' + pageSize + '&sortBy=' + encodeURIComponent(sortBy) + '&sortDir=' + encodeURIComponent(sortDir);
-        fetch(url)
-            .then(response => response.json())
-            .then(data => {
-                if (!data.result) {
-                    setError(data.message || 'Failed to load databases');
-                    renderRows([]);
-                    return;
+        long numDevicesPerPage = 10L;
+        if (request.getParameter("numDevicesPerPage") != null) {
+            try {
+                numDevicesPerPage = Long.valueOf(request.getParameter("numDevicesPerPage").trim());
+                if (numDevicesPerPage <= 0) {
+                    numDevicesPerPage = 10L;
                 }
-
-                totalPages = Number(data.totalPages || 0);
-                if (totalPages > 0 && page > totalPages) {
-                    page = totalPages;
-                    refreshDevices();
-                    return;
-                }
-
-                renderRows(data.resultset || []);
-                updatePager();
-            })
-            .catch(error => {
-                setError('Error fetching databases: ' + error);
-                renderRows([]);
-                updatePager();
-            });
-    }
-
-    function goPrevPage() {
-        if (page > 1) {
-            page -= 1;
-            refreshDevices();
+            } catch (NumberFormatException e) {
+                numDevicesPerPage = 10L;
+            }
         }
-    }
 
-    function goNextPage() {
-        if (page < totalPages) {
-            page += 1;
-            refreshDevices();
+        Long pageNumber = null;
+        if (request.getParameter("pageNumber") != null) {
+            try {
+                pageNumber = Long.valueOf(request.getParameter("pageNumber").trim());
+            } catch (NumberFormatException e) {
+                pageNumber = null;
+            }
         }
-    }
 
-    function applyPageSize() {
-        const value = parseInt(document.getElementById('page-size').value || '10', 10);
-        pageSize = (!isNaN(value) && value > 0) ? value : 10;
-        page = 1;
-        refreshDevices();
-    }
+        String sortColumn = "database_name";
+        if (request.getParameter("sortColumn") != null) {
+            sortColumn = request.getParameter("sortColumn");
+        }
 
-    function changeSort(column) {
-        if (sortBy === column) {
-            sortDir = sortDir === 'ASC' ? 'DESC' : 'ASC';
+        String sortOrder = "asc";
+        if (request.getParameter("sortOrder") != null) {
+            sortOrder = request.getParameter("sortOrder");
+        }
+
+        // Validate sortColumn against whitelist to prevent SQL injection
+        java.util.Set<String> validColumns = new java.util.HashSet<>(java.util.Arrays.asList(
+            "database_name", "database_path", "database_type", "request_count",
+            "request_rate", "open_connections", "open_resultsets", "last_heartbeat_time"
+        ));
+        if (!validColumns.contains(sortColumn)) {
+            sortColumn = "database_name";
+        }
+        // Validate sortOrder
+        if (!"asc".equalsIgnoreCase(sortOrder) && !"desc".equalsIgnoreCase(sortOrder)) {
+            sortOrder = "asc";
+        }
+
+        long numDevices = 0L;
+        Class.forName("org.sqlite.JDBC");
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + statsFilePath)) {
+            try (Statement stmt = conn.createStatement();
+                 ResultSet countRS = stmt.executeQuery("SELECT count(*) FROM databases")) {
+                numDevices = countRS.getLong(1);
+            }
+        }
+
+        long numPages = numDevices / numDevicesPerPage;
+        if ((numDevices % numDevicesPerPage) > 0) {
+            numPages += 1;
+        }
+        if (numPages == 0) {
+            numPages = 1L;
+        }
+
+        long prevPageNumber;
+        long nextPageNumber;
+        if (pageNumber == null) {
+            pageNumber = 1L;
+            prevPageNumber = 1L;
+            nextPageNumber = 2L;
         } else {
-            sortBy = column;
-            sortDir = 'ASC';
+            if (pageNumber > numPages) {
+                pageNumber = numPages;
+            }
+            if (pageNumber <= 0) {
+                pageNumber = 1L;
+            }
+            prevPageNumber = pageNumber - 1;
+            nextPageNumber = pageNumber + 1;
         }
-        page = 1;
-        refreshDevices();
-    }
+        if (nextPageNumber > numPages) {
+            nextPageNumber = numPages;
+        }
+        if (prevPageNumber <= 0) {
+            prevPageNumber = 1L;
+        }
 
-    refreshDevices();
-</script>
+        long numDevicesOnThisPage = numDevicesPerPage;
+        if (pageNumber == numPages) {
+            numDevicesOnThisPage = numDevices - ((pageNumber - 1) * numDevicesPerPage);
+        }
+
+        long startOffset = (pageNumber - 1) * numDevicesPerPage;
+    %>
+    <center>
+        <form name="deviceForm" id="deviceForm" method="post" action="devices.jsp">
+            <input type="hidden" name="sortColumn" id="sortColumn" value="<%=sortColumn%>">
+            <input type="hidden" name="sortOrder" id="sortOrder" value="<%=sortOrder%>">
+            <table>
+                <tr>
+                    <td>
+                        <div class="pagination">
+                            <%
+                            if (pageNumber == 1) {
+                                out.println("<input type=\"button\" name=\"Previous\" id=\"Previous\" value=\"Previous\" onclick=\"javascript: this.form.pageNumber.value = this.form.pageNumber.value - 1; this.form.submit()\" disabled>");
+                            } else {
+                                out.println("<input type=\"button\" name=\"Previous\" id=\"Previous\" value=\"Previous\" onclick=\"javascript: this.form.pageNumber.value = this.form.pageNumber.value - 1; this.form.submit()\">");
+                            }
+
+                            out.println("PAGE <input type=\"text\" size=2 name=\"pageNumber\" id=\"pageNumber\" value=" + pageNumber + "> OF " + numPages);
+                            out.println("<input type=\"button\" name=\"Go\" id=\"Go\" value=\"Go\" onclick=\"this.form.submit()\">");
+
+                            if (pageNumber == numPages) {
+                                out.println("<input type=\"button\" name=\"Next\" id=\"Next\" value=\"Next\" onclick=\"javascript: this.form.pageNumber.value = parseInt(this.form.pageNumber.value) + 1; this.form.submit()\" disabled>");
+                            } else {
+                                out.println("<input type=\"button\" name=\"Next\" id=\"Next\" value=\"Next\" onclick=\"javascript: this.form.pageNumber.value = parseInt(this.form.pageNumber.value) + 1; this.form.submit()\">");
+                            }
+                            %>
+                        </div>
+                    </td>
+                    <td>
+                        <div class="pagination">
+                            <input type="text" size=2 name="numDevicesPerPage" id="numDevicesPerPage" value=<%=numDevicesPerPage%>> PER PAGE
+                            <input type="button" name="GoPerPage" id="GoPerPage" value="Go" onclick="this.form.submit()">
+                        </div>
+                    </td>
+                    <td></td>
+                    <td align="right">
+                        <div class="pagination">
+                            SHOWING <b><%=numDevicesOnThisPage%></b> OUT OF <b><%=numDevices%></b> DATABASES
+                        </div>
+                    </td>
+                    <td>
+                        <div class="pagination">
+                            REFRESH IN
+                            <input type="text" id="refresh-interval" name="refresh-interval" value="<%=refreshInterval%>" size="1" onchange="autoRefreshSetTimeout()">
+                            SECONDS
+                        </div>
+                    </td>
+                </tr>
+            </table>
+            <table>
+                <tbody>
+                    <tr>
+                        <th onclick="processSort('database_name');">
+                            <%
+                            if (sortColumn.equals("database_name")) {
+                                out.println(sortOrder.equals("asc") ? "Database Name &#9650;" : "Database Name &#9660;");
+                            } else {
+                                out.println("Database Name");
+                            }
+                            %>
+                        </th>
+                        <th onclick="processSort('database_path');">
+                            <%
+                            if (sortColumn.equals("database_path")) {
+                                out.println(sortOrder.equals("asc") ? "Database Path &#9650;" : "Database Path &#9660;");
+                            } else {
+                                out.println("Database Path");
+                            }
+                            %>
+                        </th>
+                        <th onclick="processSort('database_type');">
+                            <%
+                            if (sortColumn.equals("database_type")) {
+                                out.println(sortOrder.equals("asc") ? "Database Type &#9650;" : "Database Type &#9660;");
+                            } else {
+                                out.println("Database Type");
+                            }
+                            %>
+                        </th>
+                        <th onclick="processSort('request_count');">
+                            <%
+                            if (sortColumn.equals("request_count")) {
+                                out.println(sortOrder.equals("asc") ? "Request Count &#9650;" : "Request Count &#9660;");
+                            } else {
+                                out.println("Request Count");
+                            }
+                            %>
+                        </th>
+                        <th onclick="processSort('request_rate');">
+                            <%
+                            if (sortColumn.equals("request_rate")) {
+                                out.println(sortOrder.equals("asc") ? "Request Rate &#9650;" : "Request Rate &#9660;");
+                            } else {
+                                out.println("Request Rate");
+                            }
+                            %>
+                        </th>
+                        <th onclick="processSort('open_connections');">
+                            <%
+                            if (sortColumn.equals("open_connections")) {
+                                out.println(sortOrder.equals("asc") ? "Open Connections &#9650;" : "Open Connections &#9660;");
+                            } else {
+                                out.println("Open Connections");
+                            }
+                            %>
+                        </th>
+                        <th onclick="processSort('open_resultsets');">
+                            <%
+                            if (sortColumn.equals("open_resultsets")) {
+                                out.println(sortOrder.equals("asc") ? "Open Result Sets &#9650;" : "Open Result Sets &#9660;");
+                            } else {
+                                out.println("Open Result Sets");
+                            }
+                            %>
+                        </th>
+                        <th onclick="processSort('last_heartbeat_time');">
+                            <%
+                            if (sortColumn.equals("last_heartbeat_time")) {
+                                out.println(sortOrder.equals("asc") ? "Last Heartbeat &#9650;" : "Last Heartbeat &#9660;");
+                            } else {
+                                out.println("Last Heartbeat");
+                            }
+                            %>
+                        </th>
+                    </tr>
+
+                    <%
+                    try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + statsFilePath)) {
+                        String query = "SELECT database_name, database_path, database_type, request_count, request_rate, open_connections, open_resultsets, last_heartbeat_time FROM databases ORDER BY "
+                                + sortColumn + " " + sortOrder + " LIMIT " + startOffset + ", " + numDevicesPerPage;
+                        try (Statement stmt = conn.createStatement();
+                             ResultSet rs = stmt.executeQuery(query)) {
+                            while (rs.next()) {
+                                String dbName = rs.getString("database_name");
+                                String encodedDbName = URLEncoder.encode(dbName, "UTF-8");
+                                String deviceStatsURL = "deviceStats.jsp?database_name=" + encodedDbName;
+
+                                out.println("<tr>");
+                                out.println("<td><a href=\"" + deviceStatsURL + "\">" + dbName + "</a></td>");
+                                out.println("<td>" + rs.getString("database_path") + "</td>");
+                                out.println("<td>" + rs.getString("database_type") + "</td>");
+                                out.println("<td>" + rs.getLong("request_count") + "</td>");
+                                out.println("<td>" + String.format("%.2f", rs.getDouble("request_rate")) + " req/sec</td>");
+                                out.println("<td>" + rs.getLong("open_connections") + "</td>");
+                                out.println("<td>" + rs.getLong("open_resultsets") + "</td>");
+
+                                long hbMs = rs.getLong("last_heartbeat_time");
+                                String hbStr = "-";
+                                if (hbMs > 0) {
+                                    LocalDateTime ldt = LocalDateTime.ofInstant(
+                                        Instant.ofEpochMilli(hbMs), ZoneId.systemDefault());
+                                    hbStr = ldt.format(DateTimeFormatter.ofPattern("M/d/yyyy, h:mm:ss a"));
+                                }
+                                out.println("<td>" + hbStr + "</td>");
+                                out.println("</tr>");
+                            }
+                        }
+                    } catch (Exception e) {
+                        out.println("<tr><td colspan=\"8\"><h4 style=\"color: red;\">Failed to read database statistics. Please refresh the page.</h4></td></tr>");
+                    }
+                    %>
+                </tbody>
+            </table>
+        </form>
+    </center>
+</div>
 </body>
 </html>

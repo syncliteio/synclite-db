@@ -204,11 +204,11 @@ function autoRefresh() {
 							out.println("<tr><td>Port</td><td>" + port + "</td></tr>");
 							out.println("<tr><td>Number of Threads</td><td>" + numThreads + "</td></tr>");
 							out.println("<tr><td>Server Uptime</td><td>" + elapsed.toString() + "</td></tr>");
+							out.println("<tr><td>Database Count</td><td><a href=\"devices.jsp\">" + rs.getLong("database_count") + "</a></td></tr>");
 							out.println("<tr><td>Total Requests</td><td>" + rs.getLong("request_count") + "</td></tr>");
 							out.println("<tr><td>Request Rate</td><td>" + String.format("%.2f", rs.getDouble("request_rate")) + " req/sec</td></tr>");
 							out.println("<tr><td>Open Connections</td><td>" + rs.getLong("open_connections") + "</td></tr>");
 							out.println("<tr><td>Open Result Sets</td><td>" + rs.getLong("open_resultsets") + "</td></tr>");
-							out.println("<tr><td>Database Count</td><td><a href=\"devices.jsp\">" + rs.getLong("database_count") + "</a></td></tr>");
 							out.println("<tr><td>Last Heartbeat</td><td>" + heartbeatStr + "</td></tr>");
 						} else {
 							out.println("<h4 style=\"color: red;\">Please configure and start or load a SyncLite DB job to view dashboard statistics.</h4>");

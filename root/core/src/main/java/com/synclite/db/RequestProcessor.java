@@ -192,6 +192,22 @@ final class RequestProcessor {
 				}
 
 				db = new DB(dbName, dbType, dbPath, dbSyncLiteLoggerConfig);
+
+				// For non-initialize operations on a new database, initialize and register it
+				// so that the Monitor can track it immediately.
+				if (!"initialize".equals(sqlToCheck)) {
+					try {
+						db.init();
+						DB.addDatabase(db);
+						Monitor monitor = Monitor.getInstance();
+						if (monitor != null) {
+							monitor.recordStatChange();
+						}
+					} catch (Exception e) {
+						Main.globalTracer.error("Error: Failed to initialize database : " + db + " : " + e.getMessage(), e);
+						return Main.createJsonResponse(false, "Failed to initialize database : " + db + " : " + e.getMessage(), null, "ERR_DATABASE", protocolVersion);
+					}
+				}
 			}
 
 			switch (sqlToCheck) {
@@ -199,6 +215,10 @@ final class RequestProcessor {
 				try {
 					db.init();
 					DB.addDatabase(db);
+					Monitor monitor = Monitor.getInstance();
+					if (monitor != null) {
+						monitor.recordStatChange();
+					}
 					return Main.createJsonResponse(true, "Database initialized successfully", null, "OK", protocolVersion);
 				} catch (Exception e) {
 					Main.globalTracer.error("Error: Failed to initialize database : " + db + " : " + e.getMessage(), e);
@@ -209,6 +229,10 @@ final class RequestProcessor {
 				try {
 					db.close();
 					DB.removeDatabase(db);
+					Monitor monitor = Monitor.getInstance();
+					if (monitor != null) {
+						monitor.recordStatChange();
+					}
 					return Main.createJsonResponse(true, "Database closed successfully", null, "OK", protocolVersion);
 				} catch (Exception e) {
 					Main.globalTracer.debug("Failed to close database : " + db + " : " + e.getMessage());

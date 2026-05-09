@@ -35,6 +35,8 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import org.apache.log4j.Logger;
 
+import io.synclite.logger.DeviceType;
+
 
 public class Monitor {
 
@@ -77,8 +79,7 @@ public class Monitor {
 	private class FileDumper extends Dumper{
 		Connection statsConn;
 		PreparedStatement updateDashboardPstmt;
-		PreparedStatement deleteAllDatabasesPstmt;
-		PreparedStatement insertDatabasesPstmt;
+		PreparedStatement upsertDatabasesPstmt;
 
 		private String createDashboardTableSql = "CREATE TABLE if not exists statistics(header TEXT, uptime_ms LONG, request_count LONG, request_rate REAL, open_connections LONG, open_resultsets LONG, database_count LONG, last_heartbeat_time LONG, last_job_start_time LONG)";
 		private String insertDashboardTableSql = "INSERT INTO statistics (header, uptime_ms, request_count, request_rate, open_connections, open_resultsets, database_count, last_heartbeat_time, last_job_start_time) VALUES('$1', 0, 0, 0.0, 0, 0, 0, 0, 0)";
@@ -86,8 +87,7 @@ public class Monitor {
 		private String selectDashboardTableSql = "SELECT uptime_ms, request_count, request_rate FROM statistics;";
 
 		private String createDatabasesTableSql = "CREATE TABLE IF NOT EXISTS databases(database_name TEXT PRIMARY KEY, database_type TEXT, database_path TEXT, database_size LONG, logger_options_json TEXT, uptime_ms LONG, request_count LONG, request_rate REAL, open_connections LONG, open_resultsets LONG, last_heartbeat_time LONG, last_job_start_time LONG, last_updated LONG)";
-		private String deleteAllDatabasesSql = "DELETE FROM databases";
-		private String insertDatabasesSql = "INSERT INTO databases(database_name, database_type, database_path, database_size, logger_options_json, uptime_ms, request_count, request_rate, open_connections, open_resultsets, last_heartbeat_time, last_job_start_time, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+		private String upsertDatabasesSql = "INSERT OR REPLACE INTO databases(database_name, database_type, database_path, database_size, logger_options_json, uptime_ms, request_count, request_rate, open_connections, open_resultsets, last_heartbeat_time, last_job_start_time, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
 		private FileDumper() {
 		}
@@ -114,13 +114,15 @@ public class Monitor {
 					updateDashboardPstmt = statsConn.prepareStatement(updateDashboardTableSql);        			
 					
 					stmt.execute(createDatabasesTableSql);
-					deleteAllDatabasesPstmt = statsConn.prepareStatement(deleteAllDatabasesSql);
-					insertDatabasesPstmt = statsConn.prepareStatement(insertDatabasesSql);
+					upsertDatabasesPstmt = statsConn.prepareStatement(upsertDatabasesSql);
 
 					migrateLegacyTables(stmt);
 					if (!metadataFileExists && Files.exists(legacyMetadataPath)) {
 						migrateLegacyFile(stmt, legacyMetadataPath);
 					}
+
+					// Reload existing databases from metadata into in-memory registry
+					reloadExistingDatabases(stmt);
 
 					// Backward compatibility for existing deployments that still have database_statistics.
 				}        		
@@ -130,6 +132,49 @@ public class Monitor {
 				throw new Exception("Failed to create/open SyncLite DB metadata file at : " + url, e);
 			}
 
+		}
+
+		private void reloadExistingDatabases(Statement stmt) {
+			try (ResultSet rs = stmt.executeQuery("SELECT database_name, database_type, database_path FROM databases")) {
+				int reloaded = 0;
+				while (rs.next()) {
+					String dbName = rs.getString("database_name");
+					String dbTypeStr = rs.getString("database_type");
+					String dbPathStr = rs.getString("database_path");
+
+					if (dbName == null || dbName.isBlank() || dbPathStr == null || dbPathStr.isBlank()) {
+						continue;
+					}
+
+					// Skip if already registered in memory
+					if (DB.getDatabase(dbName) != null) {
+						continue;
+					}
+
+					try {
+						DeviceType dbType = DeviceType.valueOf(dbTypeStr);
+						Path dbPath = Path.of(dbPathStr);
+
+						// Resolve logger config: per-DB config file or default
+						Path loggerConfig = Main.getDbDir().resolve(dbName + ".synclite_logger.conf");
+						if (!Files.exists(loggerConfig)) {
+							loggerConfig = Main.getDbDir().resolve("synclite_logger.conf");
+						}
+
+						DB db = new DB(dbName, dbType, dbPath, loggerConfig);
+						db.init();
+						DB.addDatabase(db);
+						reloaded++;
+					} catch (Exception e) {
+						tracer.warn("Failed to reload database '" + dbName + "' from metadata: " + e.getMessage());
+					}
+				}
+				if (reloaded > 0) {
+					tracer.info("Reloaded " + reloaded + " existing database(s) from metadata on startup.");
+				}
+			} catch (SQLException e) {
+				tracer.warn("Failed to reload existing databases from metadata: " + e.getMessage());
+			}
 		}
 
 		private void migrateLegacyTables(Statement stmt) {
@@ -222,8 +267,6 @@ public class Monitor {
 				Map<String, String> loggerOptionsByDb = RequestProcessor.getDatabaseLoggerOptionsSnapshot();
 				Map<String, String> existingLoggerOptionsByDb = loadExistingLoggerOptions();
 
-				deleteAllDatabasesPstmt.execute();
-
 				for (Map<String, Object> dbInfo : dbInventory) {
 					String dbName = (String) dbInfo.get("name");
 					long databaseSize = ((Number) dbInfo.get("size")).longValue();
@@ -239,20 +282,20 @@ public class Monitor {
 						loggerOptionsJson = existingLoggerOptionsByDb.get(dbName);
 					}
 
-					insertDatabasesPstmt.setString(1, dbName);
-					insertDatabasesPstmt.setString(2, (String) dbInfo.get("type"));
-					insertDatabasesPstmt.setString(3, (String) dbInfo.get("path"));
-					insertDatabasesPstmt.setLong(4, databaseSize);
-					insertDatabasesPstmt.setString(5, loggerOptionsJson);
-					insertDatabasesPstmt.setLong(6, uptimeForDb);
-					insertDatabasesPstmt.setLong(7, requestCountForDb);
-					insertDatabasesPstmt.setDouble(8, requestRateForDb);
-					insertDatabasesPstmt.setLong(9, DB.getOpenConnectionCount(dbName));
-					insertDatabasesPstmt.setLong(10, DB.getOpenResultSetCount(dbName));
-					insertDatabasesPstmt.setLong(11, lastHeartbeatForDb);
-					insertDatabasesPstmt.setLong(12, Main.getJobStartTime());
-					insertDatabasesPstmt.setLong(13, currentTime);
-					insertDatabasesPstmt.execute();
+					upsertDatabasesPstmt.setString(1, dbName);
+					upsertDatabasesPstmt.setString(2, (String) dbInfo.get("type"));
+					upsertDatabasesPstmt.setString(3, (String) dbInfo.get("path"));
+					upsertDatabasesPstmt.setLong(4, databaseSize);
+					upsertDatabasesPstmt.setString(5, loggerOptionsJson);
+					upsertDatabasesPstmt.setLong(6, uptimeForDb);
+					upsertDatabasesPstmt.setLong(7, requestCountForDb);
+					upsertDatabasesPstmt.setDouble(8, requestRateForDb);
+					upsertDatabasesPstmt.setLong(9, DB.getOpenConnectionCount(dbName));
+					upsertDatabasesPstmt.setLong(10, DB.getOpenResultSetCount(dbName));
+					upsertDatabasesPstmt.setLong(11, lastHeartbeatForDb);
+					upsertDatabasesPstmt.setLong(12, Main.getJobStartTime());
+					upsertDatabasesPstmt.setLong(13, currentTime);
+					upsertDatabasesPstmt.execute();
 				}
 				
 				statsConn.commit();
@@ -308,7 +351,7 @@ public class Monitor {
 	}
 
 	private String header;
-	private static long screenRefreshIntervalMs = 5000;
+	private static long screenRefreshIntervalMs = 1000;
 	private static final long heartbeatIntervalMs = 30000;  
 	private volatile long lastStatChangeTime = System.currentTimeMillis();
 	private long lastStatFlushTime = System.currentTimeMillis();

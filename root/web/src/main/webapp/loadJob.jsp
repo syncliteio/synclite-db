@@ -11,7 +11,7 @@
 	String errorMsg = request.getParameter("errorMsg");
 	String dbRoot = request.getParameter("db-root");
 	if (dbRoot == null || dbRoot.trim().isEmpty()) {
-		dbRoot = Path.of(System.getProperty("user.home"), "synclite", "db").toString();
+		dbRoot = Path.of(System.getProperty("user.home"), "synclite", "job1", "db").toString();
 	}
 %>
 <body>
