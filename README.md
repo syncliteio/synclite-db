@@ -34,7 +34,17 @@ synclite-db.sh --config synclite_db.conf
 
 The server binds to `http://localhost:<configured-port>` by default.
 
+Database files are managed by the server under its DB root directory; applications should not pass physical DB paths in API calls.
+
 ## HTTP/JSON API
+
+### Request model (important)
+
+- Applications send `db-name` (not `db-path`).
+- SyncLite DB resolves the physical database path internally under the server DB root directory.
+- `db-name` is also used internally as SyncLite Logger `device-name`.
+- On `initialize`, pass logger settings as a nested JSON object in `synclite-logger-options` (or `synclite-logger-config` object alias).
+- File-path based logger config in requests is deprecated.
 
 ### Initialize a database
 
@@ -42,17 +52,22 @@ The server binds to `http://localhost:<configured-port>` by default.
 POST /synclite
 {
   "db-type": "SQLITE",
-  "db-path": "/home/alice/synclite/job1/myapp.db",
-  "synclite-logger-config": "/home/alice/synclite/job1/synclite_logger.conf",
+  "db-name": "myapp",
+  "synclite-logger-options": {
+    "local-data-stage-directory": "/home/alice/synclite/job1/stageDir",
+    "destination-type": "FS"
+  },
   "sql": "initialize"
 }
 ```
+
+If `synclite-logger-options` is omitted, server default logger config is used.
 
 ### Create a table
 
 ```json
 {
-  "db-path": "/home/alice/synclite/job1/myapp.db",
+  "db-name": "myapp",
   "sql": "CREATE TABLE IF NOT EXISTS events(id INT, payload TEXT)"
 }
 ```
@@ -61,7 +76,7 @@ POST /synclite
 
 ```json
 {
-  "db-path": "/home/alice/synclite/job1/myapp.db",
+  "db-name": "myapp",
   "sql": "INSERT INTO events VALUES(?, ?)",
   "arguments": [[1, "edge-event-1"], [2, "edge-event-2"]]
 }
@@ -71,13 +86,13 @@ POST /synclite
 
 ```json
 // Begin
-{ "db-path": "...", "sql": "begin" }
+{ "db-name": "myapp", "sql": "begin" }
 
 // Execute inside transaction
-{ "db-path": "...", "sql": "INSERT INTO events VALUES(?, ?)", "txn-handle": "<uuid>", "arguments": [[3, "three"]] }
+{ "db-name": "myapp", "sql": "INSERT INTO events VALUES(?, ?)", "txn-handle": "<uuid>", "arguments": [[3, "three"]] }
 
 // Commit
-{ "db-path": "...", "sql": "commit", "txn-handle": "<uuid>" }
+{ "db-name": "myapp", "sql": "commit", "txn-handle": "<uuid>" }
 ```
 
 ### Querying data — SELECT, result set handling, and pagination
@@ -87,7 +102,7 @@ POST /synclite
 ```json
 POST /synclite
 {
-  "db-path": "/home/alice/synclite/job1/myapp.db",
+  "db-name": "myapp",
   "sql": "SELECT id, name, score FROM players ORDER BY id",
   "resultset-include-metadata": "ON"
 }
@@ -124,7 +139,7 @@ Use `resultset-pagination-size` in the initial request. The server returns the f
 
 ```json
 {
-  "db-path": "/home/alice/synclite/job1/myapp.db",
+  "db-name": "myapp",
   "sql": "SELECT id, name, score FROM players ORDER BY id",
   "resultset-pagination-size": 100,
   "resultset-include-metadata": "ON"
@@ -159,7 +174,7 @@ Repeat until `has-more` is `false`. The handle is automatically released on the 
 **Full pagination loop in Python:**
 
 ```python
-r = execute_sql(db_path, None, "SELECT id, name, score FROM players ORDER BY id",
+r = execute_sql("myapp", None, "SELECT id, name, score FROM players ORDER BY id",
                 resultset_pagination_size=100, include_metadata=True)
 
 # Print header
@@ -182,7 +197,7 @@ Pass `"resultset-data-format": "DB"` (with metadata on) to receive rows as value
 
 ```json
 {
-  "db-path": "/home/alice/synclite/job1/myapp.db",
+  "db-name": "myapp",
   "sql": "SELECT id, name, score FROM players ORDER BY id",
   "resultset-data-format": "DB",
   "resultset-include-metadata": "ON"
@@ -208,8 +223,98 @@ Column order in each row array matches the order of `column-metadata`. The same 
 ### Close
 
 ```json
-{ "db-path": "...", "sql": "close" }
+{ "db-name": "myapp", "sql": "close" }
 ```
+
+## Authentication
+
+SyncLite DB supports two independent authentication modes, configured in `synclite_db.conf`.
+
+### Mode 1 — Global Token
+
+A shared secret token. Every request carrying the correct token is accepted.
+
+**Server configuration (`synclite_db.conf`):**
+
+```properties
+auth-token = change-me-to-a-long-random-value
+```
+
+**Client — send the token as an HTTP header:**
+
+```python
+import requests
+
+headers = {"X-SyncLite-Token": "change-me-to-a-long-random-value"}
+requests.post("http://localhost:5555/synclite",
+              json={"db-name": "myapp", "sql": "SELECT 1"},
+              headers=headers)
+```
+
+Or via curl:
+
+```bash
+curl -X POST http://localhost:5555/synclite \
+  -H "Content-Type: application/json" \
+  -H "X-SyncLite-Token: change-me-to-a-long-random-value" \
+  -d '{"db-name": "myapp", "sql": "SELECT 1"}'
+```
+
+The environment variable `SYNCLITE_DB_AUTH_TOKEN` is the conventional way SDK samples pick up this token.
+
+### Mode 2 — Per-App HMAC Signed Requests
+
+Each registered application has its own `app-id` and `app-secret`. Every request is signed with HMAC-SHA256 over a canonical string that includes a timestamp, a nonce, and the SHA-256 hash of the request body. This prevents replay attacks and body tampering.
+
+**Server configuration (`synclite_db.conf`):**
+
+```properties
+enable-app-auth = true
+authorized-apps = app1,app2
+
+app.app1.secret = replace-with-long-random-secret
+app.app1.allowed-ops = initialize,begin,commit,rollback,select,next,execute,close
+
+app.app2.secret = replace-with-another-secret
+app.app2.allowed-ops = select,next,execute
+```
+
+**`allowed-ops` values:** `initialize` · `close` · `begin` · `commit` · `rollback` · `select` · `next` · `execute`
+
+**Client — sign each request:**
+
+```python
+import requests, json, hashlib, hmac, base64, time, uuid
+
+APP_ID     = "app1"
+APP_SECRET = "replace-with-long-random-secret"
+BASE_URL   = "http://localhost:5555/synclite"
+
+def signed_post(payload: dict) -> dict:
+    body      = json.dumps(payload, separators=(",", ":"))
+    timestamp = str(int(time.time() * 1000))
+    nonce     = str(uuid.uuid4())
+    body_hash = hashlib.sha256(body.encode()).hexdigest()
+    canonical = f"POST\n/\n{timestamp}\n{nonce}\n{body_hash}"
+    sig       = base64.b64encode(
+                    hmac.new(APP_SECRET.encode(), canonical.encode(),
+                             hashlib.sha256).digest()
+                ).decode()
+    headers = {
+        "Content-Type":         "application/json",
+        "X-SyncLite-App-Id":    APP_ID,
+        "X-SyncLite-Timestamp": timestamp,
+        "X-SyncLite-Nonce":     nonce,
+        "X-SyncLite-Signature": sig,
+    }
+    return requests.post(BASE_URL, data=body, headers=headers).json()
+
+signed_post({"db-name": "myapp", "sql": "SELECT 1"})
+```
+
+The environment variables `SYNCLITE_DB_APP_ID` and `SYNCLITE_DB_APP_SECRET` are the conventional way SDK samples pick up credentials.
+
+See [DOCUMENTATION.md](../DOCUMENTATION.md#73-authentication) for additional details including advanced tuning parameters (`app-auth-timestamp-skew-ms`, `app-auth-nonce-ttl-ms`, `app-auth-nonce-cache-max-entries`) and a Java signing example.
 
 ## SDK Samples
 
@@ -231,11 +336,11 @@ See `sdk-source/GETTING_STARTED.md` for run instructions and `sdk-source/LANGUAG
 ## Build
 
 ```bash
-cd synclite-db/db
+cd synclite-db/root/core
 mvn -Drevision=oss clean install
 ```
 
-Built artifact: `db/target/synclite-db-oss.jar`
+Built artifact: `root/core/target/synclite-db-core-oss.jar`
 
 ## Related Components
 
