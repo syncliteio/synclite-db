@@ -1,10 +1,15 @@
-# SyncLite DB — Language-Agnostic Sync-Ready Database Server
+
+# SyncLite DB — Local-First, Sync-Enabled Database Server
+
 
 > Part of the [SyncLite Platform](https://github.com/syncliteio/SyncLite) — Build Anything, Sync Anywhere.
 
+
 ## What is SyncLite DB?
 
-**SyncLite DB** is a standalone, sync-enabled database server that wraps popular embedded databases — SQLite, DuckDB, Apache Derby, H2, and HyperSQL — and exposes them over HTTP as a JSON API.
+**SyncLite DB** is a local-first, sync-enabled database server that wraps popular embedded databases — SQLite, DuckDB, Apache Derby, H2, and HyperSQL — and exposes them over HTTP as a JSON API.
+
+Optimized for running on localhost, edge devices, or user workstations, SyncLite DB enables robust, offline-capable, and sync-ready applications. While designed for local-first deployment, it can securely handle remote requests when needed (e.g., for admin, monitoring, or hybrid scenarios).
 
 Whereas [SyncLite Logger](https://github.com/syncliteio/synclite-logger-java) is an embeddable JDBC library for Java and Python, SyncLite DB is the **language-agnostic alternative**: any application written in any language (Java, Python, C++, C#, Go, Rust, Ruby, Node.js, and more) can send SQL requests as JSON over HTTP and have them executed on the embedded database and automatically synced through the SyncLite pipeline to the destination database.
 
@@ -22,19 +27,27 @@ Your App (any language)  ──HTTP/JSON──▶  SyncLite DB Server  ──▶
 - **Batch operations** — batched INSERT / UPDATE / DELETE in a single HTTP call
 - **Zero schema changes** — your app sends standard SQL; SyncLite DB handles the logging
 
-## Starting the Server
 
-```bash
-# Windows
-synclite-db.bat --config synclite_db.conf
+## Starting SyncLite DB
 
-# Linux / macOS
-synclite-db.sh --config synclite_db.conf
-```
+SyncLite DB is now deployed as a web application (WAR) and provides a browser-based GUI for configuration and management.
 
-The server binds to `http://localhost:<configured-port>` by default.
+### Quick Start (GUI/WAR Deployment)
 
-Database files are managed by the server under its DB root directory; applications should not pass physical DB paths in API calls.
+1. **Deploy the WAR:**  
+  - Copy `synclite-db-oss.war` (from `root/web/target/` or your platform's `tools/synclite-db/`) into the `webapps/` directory of your Apache Tomcat server.
+  - Start Tomcat (see platform or Tomcat documentation).
+
+2. **Access the Web UI:**  
+  - Open your browser and go to:  
+    `http://localhost:8080/synclite-db`  
+    (Adjust port if your Tomcat uses a different one.)
+
+3. **Configure & Start:**  
+  - Use the web interface to configure databases, logger options, and start/stop the SyncLite DB server.
+  - All management, monitoring, and job setup is now available via the GUI.
+
+> **Note:** The legacy CLI scripts (`synclite-db.sh` / `.bat`) are still available for advanced/manual use, but most users should use the web UI for all operations.
 
 ## HTTP/JSON API
 
