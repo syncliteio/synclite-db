@@ -80,6 +80,7 @@ public class ResetJob extends HttpServlet {
 
 			if (keepJobConfiguration.equals("true")) {
 				excludePaths.add(dbRoot.resolve("synclite_db.conf").toAbsolutePath().normalize());
+				excludePaths.add(dbRoot.resolve("synclite.conf").toAbsolutePath().normalize());
 				excludePaths.add(dbRoot.resolve("synclite_logger.conf").toAbsolutePath().normalize());
 			}
 

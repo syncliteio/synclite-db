@@ -11,7 +11,7 @@
 
 Optimized for running on localhost, edge devices, or user workstations, SyncLite DB enables robust, offline-capable, and sync-ready applications. While designed for local-first deployment, it can securely handle remote requests when needed (e.g., for admin, monitoring, or hybrid scenarios).
 
-Whereas [SyncLite Logger](https://github.com/syncliteio/synclite-logger-java) is an embeddable JDBC library for Java and Python, SyncLite DB is the **language-agnostic alternative**: any application written in any language (Java, Python, C++, C#, Go, Rust, Ruby, Node.js, and more) can send SQL requests as JSON over HTTP and have them executed on the embedded database and automatically synced through the SyncLite pipeline to the destination database.
+Whereas [SyncLite Logger](https://github.com/syncliteio/synclite-logger-java) is an embeddable JDBC library for Java, and [SyncLite Runtime](https://github.com/syncliteio/SyncLite/tree/main/synclite-logger-rust) serves Rust/Python/C++ embeddings, SyncLite DB is the **language-agnostic alternative**: any application written in any language (Java, Python, C++, C#, Go, Rust, Ruby, Node.js, and more) can send SQL requests as JSON over HTTP and have them executed on the embedded database and automatically synced through the SyncLite pipeline to the destination database.
 
 ```
 Your App (any language)  ──HTTP/JSON──▶  SyncLite DB Server  ──▶  Staging Storage  ──▶  SyncLite Consolidator  ──▶  Destination
@@ -68,7 +68,7 @@ POST /synclite
   "db-name": "myapp",
   "synclite-logger-options": {
     "local-data-stage-directory": "/home/alice/synclite/job1/stageDir",
-    "destination-type": "FS"
+    "device-stage-type": "FS"
   },
   "sql": "initialize"
 }
@@ -359,7 +359,8 @@ Built artifact: `root/core/target/synclite-db-core-oss.jar`
 
 | Component | Role |
 |---|---|
-| [SyncLite Logger](https://github.com/syncliteio/synclite-logger-java) | Native Java/Python JDBC driver (embedded, no HTTP overhead) |
+| [SyncLite Logger](https://github.com/syncliteio/synclite-logger-java) | Java JDBC logger (embedded, no HTTP overhead) |
+| [SyncLite Runtime](https://github.com/syncliteio/SyncLite/tree/main/synclite-logger-rust) | Full Rust runtime (logger + consolidator), consumable from Rust, Python, and C++ |
 | [SyncLite Client](https://github.com/syncliteio/synclite-client) | CLI client that can connect to SyncLite DB |
 | [SyncLite Consolidator](https://github.com/syncliteio/synclite-consolidator) | Consumes the sync logs and replicates to destination |
 

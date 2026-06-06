@@ -675,14 +675,37 @@ final class RequestProcessor {
 		}
 
 		if (loggerOptions == null) {
-			Path defaultPath = Main.getDbDir().resolve("synclite_logger.conf");
+			Path defaultPath = Main.resolveSyncliteConf(Main.getDbDir());
 			if (!Files.exists(defaultPath)) {
-				throw new IllegalArgumentException("default synclite_logger.conf does not exist");
+				throw new IllegalArgumentException("default synclite.conf does not exist");
 			}
 			return defaultPath;
 		}
 
-		Path configPath = Main.getDbDir().resolve(dbName + ".synclite_logger.conf");
+		if (loggerOptions.has("device-stage-type") && !loggerOptions.has("destination-type")) {
+			loggerOptions.put("destination-type", String.valueOf(loggerOptions.get("device-stage-type")));
+		}
+		if (loggerOptions.has("destination-type") && !loggerOptions.has("device-stage-type")) {
+			loggerOptions.put("device-stage-type", String.valueOf(loggerOptions.get("destination-type")));
+		}
+		for (String key : new java.util.ArrayList<String>(loggerOptions.keySet())) {
+			if (key != null && key.startsWith("device-stage-type-") && !key.equals("device-stage-type")) {
+				String suffix = key.substring("device-stage-type-".length());
+				String legacyKey = "destination-type-" + suffix;
+				if (!loggerOptions.has(legacyKey)) {
+					loggerOptions.put(legacyKey, String.valueOf(loggerOptions.get(key)));
+				}
+			}
+			if (key != null && key.startsWith("destination-type-") && !key.equals("destination-type")) {
+				String suffix = key.substring("destination-type-".length());
+				String newKey = "device-stage-type-" + suffix;
+				if (!loggerOptions.has(newKey)) {
+					loggerOptions.put(newKey, String.valueOf(loggerOptions.get(key)));
+				}
+			}
+		}
+
+		Path configPath = Main.getDbDir().resolve(dbName + ".synclite.conf");
 		StringBuilder builder = new StringBuilder();
 		for (String key : loggerOptions.keySet()) {
 			Object value = loggerOptions.get(key);

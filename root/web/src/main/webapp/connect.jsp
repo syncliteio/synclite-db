@@ -126,7 +126,7 @@
             ? loggerOptions
             : {
                 "local-data-stage-directory": stageDir,
-                "destination-type": "FS"
+                "device-stage-type": "FS"
             };
 
         const payload = {

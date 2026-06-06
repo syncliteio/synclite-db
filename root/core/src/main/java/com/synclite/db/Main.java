@@ -166,6 +166,20 @@ public class Main {
 		return dbDir;
 	}
 
+	// Returns the conf file path inside dir, preferring "synclite.conf" but falling
+	// back to the legacy "synclite_logger.conf" if only the legacy file exists.
+	static Path resolveSyncliteConf(Path dir) {
+		Path preferred = dir.resolve("synclite.conf");
+		if (Files.exists(preferred)) {
+			return preferred;
+		}
+		Path legacy = dir.resolve("synclite_logger.conf");
+		if (Files.exists(legacy)) {
+			return legacy;
+		}
+		return preferred;
+	}
+
 	static long getStatsStartTime() {
 		return statsStartTime;
 	}

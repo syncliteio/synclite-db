@@ -105,7 +105,7 @@ final class ServerRuntime {
 	}
 
 	private static void createDefaultSyncLiteLoggerConf() throws SQLException {
-		Path confPath = Main.dbDir.resolve("synclite_logger.conf");
+		Path confPath = Main.resolveSyncliteConf(Main.dbDir);
 		if (Files.exists(confPath)) {
 			return;
 		}
@@ -119,9 +119,9 @@ final class ServerRuntime {
 		confBuilder.append(newLine);
 		confBuilder.append("#local-data-stage-directory=<path/to/local/stage/directory>");
 		confBuilder.append(newLine);
-		confBuilder.append("destination-type=FS");
+		confBuilder.append("device-stage-type=FS");
 		confBuilder.append(newLine);
-		confBuilder.append("#destination-type=<FS|MS_ONEDRIVE|GOOGLE_DRIVE|SFTP|MINIO|KAFKA|S3>");
+		confBuilder.append("#device-stage-type=<FS|MS_ONEDRIVE|GOOGLE_DRIVE|SFTP|MINIO|KAFKA|S3>");
 		confBuilder.append(newLine);
 		confBuilder.append(newLine);
 		confBuilder.append("#==============SFTP Configuration=================");
