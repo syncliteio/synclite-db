@@ -43,8 +43,8 @@ public class SyncLiteDBIntegrationTest {
     @Before
     public void setUp() throws Exception {
         Path userHome = Path.of(System.getProperty("user.home"));
-        testRoot = userHome.resolve("synclite").resolve("test");
-        deviceDir = testRoot.resolve("db").resolve("testsynclitedb");
+        testRoot = userHome.resolve("synclite").resolve("tests");
+        deviceDir = testRoot.resolve("db").resolve("synclitedb").resolve("testsynclitedb");
         stageDir = testRoot.resolve("stageDir");
 
         // Clean requested directories before test run.
@@ -55,7 +55,7 @@ public class SyncLiteDBIntegrationTest {
 
         loggerOptions = new JSONObject()
             .put("local-data-stage-directory", stageDir.toString())
-            .put("destination-type", "FS");
+            .put("device-stage-type", "FS");
 
         serverPort = reserveFreePort();
         Path configPath = writeServerConfig(deviceDir, serverPort);

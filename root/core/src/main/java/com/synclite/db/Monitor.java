@@ -156,9 +156,9 @@ public class Monitor {
 						Path dbPath = Path.of(dbPathStr);
 
 						// Resolve logger config: per-DB config file or default
-						Path loggerConfig = Main.getDbDir().resolve(dbName + ".synclite_logger.conf");
+						Path loggerConfig = Main.getDbDir().resolve(dbName + ".synclite.conf");
 						if (!Files.exists(loggerConfig)) {
-							loggerConfig = Main.getDbDir().resolve("synclite_logger.conf");
+							loggerConfig = Main.resolveSyncliteConf(Main.getDbDir());
 						}
 
 						DB db = new DB(dbName, dbType, dbPath, loggerConfig);
