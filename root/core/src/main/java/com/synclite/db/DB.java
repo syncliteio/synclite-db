@@ -40,7 +40,7 @@ import java.util.concurrent.TimeUnit;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import io.synclite.logger.*;
+import io.synclite.*;
 
 public class DB {
 

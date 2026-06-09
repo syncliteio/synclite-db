@@ -43,7 +43,7 @@ public class SyncLiteDBIntegrationTest {
     @Before
     public void setUp() throws Exception {
         Path userHome = Path.of(System.getProperty("user.home"));
-        testRoot = userHome.resolve("synclite").resolve("tests");
+        testRoot = userHome.resolve("synclite").resolve("test").resolve("synclitedb");
         deviceDir = testRoot.resolve("db").resolve("synclitedb").resolve("testsynclitedb");
         stageDir = testRoot.resolve("stageDir");
 

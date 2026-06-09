@@ -35,7 +35,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import org.apache.log4j.Logger;
 
-import io.synclite.logger.DeviceType;
+import io.synclite.DeviceType;
 
 
 public class Monitor {
