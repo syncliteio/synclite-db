@@ -22,7 +22,7 @@ import org.json.JSONObject;
 
 import com.synclite.db.DB.DBConnection;
 
-import io.synclite.logger.DeviceType;
+import io.synclite.DeviceType;
 
 final class RequestProcessor {
 	private static final AtomicLong totalRequests = new AtomicLong(0);

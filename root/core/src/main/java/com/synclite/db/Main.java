@@ -57,7 +57,7 @@ import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.handler.codec.http.HttpObjectAggregator;
 import io.netty.handler.codec.http.HttpServerCodec;
 
-import io.synclite.logger.*;
+import io.synclite.*;
 
 public class Main {
 
@@ -75,22 +75,22 @@ public class Main {
 	static {
 		//Load all SyncLite DB classes here
 		try {
-			Class.forName("io.synclite.logger.SQLite");
-			Class.forName("io.synclite.logger.SQLiteStore");
-			Class.forName("io.synclite.logger.SQLiteAppender");
-			Class.forName("io.synclite.logger.DuckDB");
-			Class.forName("io.synclite.logger.DuckDBStore");
-			Class.forName("io.synclite.logger.DuckDBAppender");
-			Class.forName("io.synclite.logger.H2");
-			Class.forName("io.synclite.logger.H2Store");
-			Class.forName("io.synclite.logger.H2Appender");
-			Class.forName("io.synclite.logger.Derby");
-			Class.forName("io.synclite.logger.DerbyStore");
-			Class.forName("io.synclite.logger.DerbyAppender");
-			Class.forName("io.synclite.logger.HyperSQL");
-			Class.forName("io.synclite.logger.HyperSQLStore");
-			Class.forName("io.synclite.logger.HyperSQLAppender");
-			Class.forName("io.synclite.logger.Streaming");
+			Class.forName("io.synclite.SQLite");
+			Class.forName("io.synclite.SQLiteStore");
+			Class.forName("io.synclite.SQLiteAppender");
+			Class.forName("io.synclite.DuckDB");
+			Class.forName("io.synclite.DuckDBStore");
+			Class.forName("io.synclite.DuckDBAppender");
+			Class.forName("io.synclite.H2");
+			Class.forName("io.synclite.H2Store");
+			Class.forName("io.synclite.H2Appender");
+			Class.forName("io.synclite.Derby");
+			Class.forName("io.synclite.DerbyStore");
+			Class.forName("io.synclite.DerbyAppender");
+			Class.forName("io.synclite.HyperSQL");
+			Class.forName("io.synclite.HyperSQLStore");
+			Class.forName("io.synclite.HyperSQLAppender");
+			Class.forName("io.synclite.Streaming");
 		} catch (Exception e) {
 			throw new RuntimeException("Failed to load SyncLite Logger classes : " + e.getMessage(), e);
 		}
