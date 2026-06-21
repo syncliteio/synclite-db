@@ -350,7 +350,7 @@ See `sdk-source/GETTING_STARTED.md` for run instructions and `sdk-source/LANGUAG
 
 ```bash
 cd synclite-db/root/core
-mvn -Drevision=oss clean install
+mvn -Drevision=1.0.0 clean install
 ```
 
 Built artifact: `root/core/target/synclite-db-core-oss.jar`
