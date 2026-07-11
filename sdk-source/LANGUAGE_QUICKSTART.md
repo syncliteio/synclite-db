@@ -4,15 +4,10 @@ This guide shows how to run each language sample in this folder.
 
 ## 1) Start SyncLite DB server
 
-In final deployment (recommended), run from the installed SyncLite distribution folder:
+SyncLite DB is deployed as a web application (WAR) and started from its browser GUI:
 
-- Windows: `synclite-platform-<version>/tools/synclite-db/synclite-db.bat --config synclite_db.conf`
-- Linux/macOS: `synclite-platform-<version>/tools/synclite-db/synclite-db.sh --config synclite_db.conf`
-
-For local development from this source repository, run:
-
-- Windows: `db/target/synclite-db.bat --config db/target/synclite_db.conf`
-- Linux/macOS: `db/target/synclite-db.sh --config db/target/synclite_db.conf`
+1. Deploy `synclite-db-1.0.0.war` (from `synclite-platform-<version>/tools/synclite-db/`, or `db/target/` for a local source build) into your Apache Tomcat `webapps/` directory.
+2. Open `http://localhost:8080/synclite-db` and configure + start the server from the GUI.
 
 Default endpoint used by samples: `http://localhost:5555`.
 
