@@ -1,16 +1,10 @@
 These are reference client samples intended to show API usage patterns. For language-specific run commands, see `LANGUAGE_QUICKSTART.md` in this folder.
 
-1. Go to the directory `synclite-platform-<version>\tools\synclite-db`.
+1. Deploy `synclite-db-1.0.0.war` (from `synclite-platform-<version>/tools/synclite-db/`) into your Apache Tomcat `webapps/` directory.
 
-2. Check the configuration values in `synclite_db.conf`.
+2. Open `http://localhost:8080/synclite-db` in your browser.
 
-3. Start the server:
-
-```bash
-synclite-db.bat --config synclite_db.conf
-# or
-synclite-db.sh --config synclite_db.conf
-```
+3. Configure and start the SyncLite DB server from the GUI (it serves the HTTP/JSON API on the port set there).
 
 4. Use any sample client in this directory to execute the core APIs:
 
