@@ -6,7 +6,7 @@ This guide shows how to run each language sample in this folder.
 
 SyncLite DB is deployed as a web application (WAR) and started from its browser GUI:
 
-1. Deploy `synclite-db-1.0.0.war` (from `synclite-platform-<version>/tools/synclite-db/`, or `db/target/` for a local source build) into your Apache Tomcat `webapps/` directory.
+1. Deploy `synclite-db-1.1.0.war` (from `synclite-platform-<version>/tools/synclite-db/`, or `db/target/` for a local source build) into your Apache Tomcat `webapps/` directory.
 2. Open `http://localhost:8080/synclite-db` and configure + start the server from the GUI.
 
 Default endpoint used by samples: `http://localhost:5555`.

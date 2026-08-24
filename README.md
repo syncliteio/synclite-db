@@ -35,7 +35,7 @@ SyncLite DB is now deployed as a web application (WAR) and provides a browser-ba
 ### Quick Start (GUI/WAR Deployment)
 
 1. **Deploy the WAR:**  
-  - Copy `synclite-db-1.0.0.war` (from `root/web/target/` or your platform's `tools/synclite-db/`) into the `webapps/` directory of your Apache Tomcat server.
+  - Copy `synclite-db-1.1.0.war` (from `root/web/target/` or your platform's `tools/synclite-db/`) into the `webapps/` directory of your Apache Tomcat server.
   - Start Tomcat (see platform or Tomcat documentation).
 
 2. **Access the Web UI:**  
@@ -348,10 +348,10 @@ See `sdk-source/GETTING_STARTED.md` for run instructions and `sdk-source/LANGUAG
 
 ```bash
 cd synclite-db/root/core
-mvn -Drevision=1.0.0 clean install
+mvn -Drevision=1.1.0 clean install
 ```
 
-Built artifact: `root/core/target/synclite-db-core-1.0.0.jar`
+Built artifact: `root/core/target/synclite-db-core-1.1.0.jar`
 
 ## Related Components
 

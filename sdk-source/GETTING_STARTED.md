@@ -1,6 +1,6 @@
 These are reference client samples intended to show API usage patterns. For language-specific run commands, see `LANGUAGE_QUICKSTART.md` in this folder.
 
-1. Deploy `synclite-db-1.0.0.war` (from `synclite-platform-<version>/tools/synclite-db/`) into your Apache Tomcat `webapps/` directory.
+1. Deploy `synclite-db-1.1.0.war` (from `synclite-platform-<version>/tools/synclite-db/`) into your Apache Tomcat `webapps/` directory.
 
 2. Open `http://localhost:8080/synclite-db` in your browser.
 
